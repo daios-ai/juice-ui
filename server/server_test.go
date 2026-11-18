@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"html/template"
 	"io"
 	"io/fs"
 	"log/slog"
@@ -776,5 +777,209 @@ func TestARefreshDuringASignOutsRevocationIsRevoked(t *testing.T) {
 	defer k.mu.Unlock()
 	if !slices.Contains(k.revoked, "rt1") {
 		t.Errorf("revoked %v, want the rotated rt1 among them", k.revoked)
+	}
+}
+
+// postForm posts a page's form fields with its CSRF token, not following a
+// redirect; extra headers name an htmx or script request.
+func postForm(t *testing.T, cl *http.Client, u, page string, form url.Values, headers ...string) *http.Response {
+	t.Helper()
+	form.Set("gorilla.csrf.Token", csrfTokenFrom(t, page))
+	req, _ := http.NewRequest(http.MethodPost, u, strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	for i := 0; i+1 < len(headers); i += 2 {
+		req.Header.Set(headers[i], headers[i+1])
+	}
+	cl.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	resp, err := cl.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	return resp
+}
+
+// A session holds accounts (requirements §5): a signed-in session signs in to
+// another through the Sign in dialog — the entry screen is for a signed-out
+// visitor alone — which a refusal answers open with the reason and the handle
+// typed, and a sign-in adds the account and puts it in use; the avatar menu
+// lists the others and switches to one; what a page offers follows the account
+// in use; sign-out ends them all and revokes every pair.
+func TestASessionSwitchesAccounts(t *testing.T) {
+	srv, revoked := sessionServer(t, newClock())
+	cl := loginClientAs(t, srv.URL, "sys")
+	if resp, _ := get(t, cl, srv.URL+"/login", false); resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") == "/login" {
+		t.Fatalf("a signed-in person is not shown the entry screen: %d %q", resp.StatusCode, resp.Header.Get("Location"))
+	}
+	_, wallet := get(t, cl, srv.URL+"/wallet", false)
+	if !strings.Contains(wallet, `<dialog id="signin" class="modal-form" aria-label="Sign in"`) || !strings.Contains(wallet, `data-modal="signin"`) ||
+		!strings.Contains(wallet, `icons.svg#log-in"/></svg>Sign in</a>`) || strings.Contains(wallet, "Add account") || strings.Contains(wallet, "Create account") {
+		t.Fatal("a signed-in page carries the Sign in dialog, closed, which the avatar menu opens")
+	}
+	if _, opened := get(t, cl, srv.URL+"/wallet?form=signin&handle=alice", false); !strings.Contains(opened, `<dialog id="signin" class="modal-form" open`) || !strings.Contains(opened, `value="alice"`) {
+		t.Fatal("without script ?form=signin&handle= opens the dialog with the handle filled in")
+	}
+	signIn := func(password string, headers ...string) (*http.Response, string) {
+		t.Helper()
+		form := url.Values{"handle": {"alice"}, "password": {password}, "gorilla.csrf.Token": {csrfTokenFrom(t, wallet)}}
+		req, _ := http.NewRequest(http.MethodPost, srv.URL+"/login", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Header.Set("Referer", srv.URL+"/wallet?tab=x")
+		for i := 0; i+1 < len(headers); i += 2 {
+			req.Header.Set(headers[i], headers[i+1])
+		}
+		resp, err := cl.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(resp.Body)
+		return resp, string(b)
+	}
+	resp, body := signIn("wrongpass", "HX-Request", "true")
+	if resp.StatusCode != http.StatusOK || !strings.Contains(body, `<dialog id="signin" class="modal-form" open aria-label="Sign in" hx-swap-oob="true">`) ||
+		!strings.Contains(body, "Invalid handle or password.") || !strings.Contains(body, `value="alice"`) || !strings.Contains(body, `href="/wallet" data-modal-close`) {
+		t.Fatalf("a refusal answers the dialog open with the reason and the handle: %d %s", resp.StatusCode, body)
+	}
+	if resp, _ := signIn("wrongpass"); resp.Header.Get("Location") != "/wallet?form=signin&handle=alice" || flashOf(t, cl, srv.URL) != "error|Invalid handle or password." {
+		t.Fatalf("without script a refusal is a flash on the page, the dialog open: %q", resp.Header.Get("Location"))
+	}
+	if resp, _ := signIn("pw", "HX-Request", "true"); resp.Header.Get("HX-Redirect") == "" {
+		t.Fatal("a sign-in in the dialog opens the landing")
+	}
+	_, page := get(t, cl, srv.URL+"/wallet", false)
+	if !strings.Contains(page, `<meta name="account" content="alice@testnet">`) || !strings.Contains(page, `name="juice_account" value="alice@testnet"`) {
+		t.Fatal("the account added is in use, and the page names it in its meta and its forms")
+	}
+	if !strings.Contains(page, `action="/switch"`) || !strings.Contains(page, `name="address" value="sys@testnet"`) {
+		t.Error("the avatar menu switches to the other account")
+	}
+	if resp, _ := get(t, cl, srv.URL+"/admin", false); resp.StatusCode != http.StatusNotFound {
+		t.Errorf("Admin follows the account in use: %d", resp.StatusCode)
+	}
+	resp = postForm(t, cl, srv.URL+"/switch", page, url.Values{"address": {"sys@testnet"}})
+	if resp.Header.Get("Location") != "/" {
+		t.Fatalf("a switch opens the landing: %q", resp.Header.Get("Location"))
+	}
+	if resp, _ := get(t, cl, srv.URL+"/admin", false); resp.StatusCode != http.StatusOK {
+		t.Errorf("the superuser's Admin is back: %d", resp.StatusCode)
+	}
+	_, page = get(t, cl, srv.URL+"/wallet", false)
+	postForm(t, cl, srv.URL+"/switch", page, url.Values{"address": {"nobody@testnet"}})
+	if f := flashOf(t, cl, srv.URL); f != "error|That account is not signed in here." {
+		t.Errorf("only an account the session holds: %q", f)
+	}
+	_, page = get(t, cl, srv.URL+"/wallet", false)
+	if resp := postForm(t, cl, srv.URL+"/logout", page, url.Values{}); resp.Header.Get("Location") != "/login" || revoked.Load() != 2 {
+		t.Errorf("sign-out ends both accounts: %q, revocations %d", resp.Header.Get("Location"), revoked.Load())
+	}
+}
+
+// A page opened as one account can do nothing as another (requirements §5):
+// a form says nothing was done; a heartbeat of any lane, a fragment and the
+// catalog file's request are sent to the landing before anything runs; a
+// request naming no account, a navigation, acts as the account in use.
+func TestAPageOfAnotherAccountDoesNothing(t *testing.T) {
+	var kernelCalls atomic.Int32
+	base := authKernel()
+	t.Cleanup(base.Close)
+	k := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/health" {
+			kernelCalls.Add(1)
+		}
+		base.Config.Handler.ServeHTTP(w, r)
+	}))
+	t.Cleanup(k.Close)
+	srv := httptest.NewServer(newTestHandler(t, k.URL))
+	t.Cleanup(srv.Close)
+	cl := loginClientAs(t, srv.URL, "sys")
+	_, entry := get(t, cl, srv.URL+"/wallet", false)
+	postForm(t, cl, srv.URL+"/login", entry, url.Values{"handle": {"alice"}, "password": {"pw"}})
+	_, stale := get(t, cl, srv.URL+"/wallet", false) // open as alice
+	postForm(t, cl, srv.URL+"/switch", stale, url.Values{"address": {"sys@testnet"}})
+
+	resp := postForm(t, cl, srv.URL+"/session", stale, url.Values{"juice_account": {"alice@testnet"}})
+	if resp.Header.Get("Location") != "/" || !strings.HasPrefix(flashOf(t, cl, srv.URL), "error|Nothing was done: that page was open as alice@testnet") {
+		t.Errorf("a form of another account: %q %q", resp.Header.Get("Location"), flashOf(t, cl, srv.URL))
+	}
+	before := kernelCalls.Load()
+	// The wallet's deposit request (wallet.mjs), a script POST naming its page's
+	// account by header, prepares nothing for the account switched to.
+	if resp := postForm(t, cl, srv.URL+"/wallet/fund", stale, url.Values{"amount": {"1"}}, "X-Juice-Account", "alice@testnet"); resp.StatusCode != http.StatusPreconditionFailed {
+		t.Errorf("a stale wallet's deposit request: %d %q", resp.StatusCode, resp.Header.Get("Location"))
+	}
+	for _, lane := range []string{"watch=session::", "slow=inbox:badge:", "apart=chat:rail:"} {
+		req, _ := http.NewRequest(http.MethodGet, srv.URL+"/tick?"+lane, nil)
+		req.Header.Set("HX-Request", "true")
+		req.Header.Set("X-Juice-Account", "alice@testnet")
+		resp, err := cl.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.Header.Get("HX-Redirect") != "/" || len(b) != 0 {
+			t.Errorf("%s of another account: redirect %q, body %q", lane, resp.Header.Get("HX-Redirect"), b)
+		}
+	}
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/search/catalog.json", nil)
+	req.Header.Set("X-Juice-Account", "alice@testnet")
+	resp, err := cl.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusPreconditionFailed || resp.Header.Get("Location") != "" {
+		t.Errorf("the catalog for another account's page is refused with no redirect, which fetch would follow carrying the header: %d %q", resp.StatusCode, resp.Header.Get("Location"))
+	}
+	if n := kernelCalls.Load() - before; n != 0 {
+		t.Errorf("a page of another account reached the kernel %d times", n)
+	}
+	req, _ = http.NewRequest(http.MethodGet, srv.URL+"/search/catalog.json", nil)
+	req.Header.Set("X-Juice-Account", "sys@testnet")
+	if resp, err = cl.Do(req); err != nil || resp.StatusCode != http.StatusOK {
+		t.Errorf("the account in use is served: %v %v", resp.StatusCode, err)
+	}
+	resp.Body.Close()
+}
+
+// servesApp is a conversations app that serves every account but
+// helper@testnet, with a route and a watcher of its own.
+type servesApp struct {
+	convApp
+	deps *apps.Deps
+}
+
+func (a servesApp) Slug() string                { return "rooms" }
+func (a servesApp) Landing() string             { return "/rooms" }
+func (a servesApp) Serves(r *http.Request) bool { return a.deps.Me(r) != "helper@testnet" }
+func (a servesApp) Rail(*http.Request) (template.HTML, error) {
+	return `<nav class="rail">rooms</nav>`, nil
+}
+func (a servesApp) Mount(mux *http.ServeMux, d apps.Deps) {
+	*a.deps = d
+	mux.HandleFunc("GET /rooms", d.RequireAuth(func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("rooms")) }))
+	d.Watch("rooms", func(*http.Request, string, string) (template.HTML, error) { return "<i>ticked</i>", nil })
+}
+
+// The core asks the conversations app whom it serves, once: an account it
+// does not serve lands on Discover, has no rail, and its routes and watchers
+// are closed to it.
+func TestConversationsServeTheirAccountsAlone(t *testing.T) {
+	kernel := authKernel()
+	t.Cleanup(kernel.Close)
+	app := servesApp{deps: &apps.Deps{}}
+	srv := httptest.NewServer(newTestHandler(t, kernel.URL, func(w *testWiring) { w.apps = []apps.App{app} }))
+	t.Cleanup(srv.Close)
+	for handle, served := range map[string]bool{"alice": true, "helper": false} {
+		cl := loginClientAs(t, srv.URL, handle)
+		resp, _ := get(t, cl, srv.URL+"/", false)
+		_, page := get(t, cl, srv.URL+"/wallet", false)
+		_, room := get(t, cl, srv.URL+"/rooms", false)
+		_, tick := get(t, cl, srv.URL+"/tick?watch=rooms:x:", true)
+		if served != (resp.Header.Get("Location") == "/rooms") || served != strings.Contains(page, "rooms</nav>") ||
+			served != (room == "rooms") || served != strings.Contains(tick, "ticked") {
+			t.Errorf("%s (served %v): landing %q, rail %v, route %q, tick %q", handle, served, resp.Header.Get("Location"), strings.Contains(page, "rooms</nav>"), room, tick)
+		}
 	}
 }

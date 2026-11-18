@@ -51,16 +51,13 @@ var kindGlyph = map[string]string{
 	"wasm":         "memory",
 	"native":       "bolt",
 	"remote_proxy": "cloud",
-	"kernel":       "hub",
-	"agent":        "smart_toy",
 }
 
 // defaultGlyph is the last resort: a neutral mark that claims nothing.
 const defaultGlyph = "widgets"
 
 // CardArt returns the fallback media SVG for an action. ref is the action's
-// address (owner@kernel/name), or a bare name for a card with no operation (a
-// kernel, an agent). The hue is keyed on the owner (the provider's identity)
+// address (owner@kernel/name). The hue is keyed on the owner (the provider's identity)
 // and the glyph on the whole address (the operation); id is accepted so a
 // partial record still draws, and kind selects the fallback glyph.
 func CardArt(id, ref, kind string) template.HTML {

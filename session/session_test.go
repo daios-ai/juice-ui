@@ -44,29 +44,6 @@ func newCtx(t *testing.T, r Issuer) (*Manager, context.Context) {
 	return m, ctx
 }
 
-func TestPKCEHandshake(t *testing.T) {
-	m, ctx := newCtx(t, &fakeRefresher{})
-	challenge, err := m.BeginPKCE(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if challenge == "" {
-		t.Fatal("empty challenge")
-	}
-	v, ok := m.TakeVerifier(ctx)
-	if !ok || v == "" {
-		t.Fatal("verifier not stored")
-	}
-	// challenge must be the S256 of the stored verifier.
-	if Challenge(v) != challenge {
-		t.Errorf("challenge does not match stored verifier")
-	}
-	// verifier is single-use.
-	if _, ok := m.TakeVerifier(ctx); ok {
-		t.Error("verifier should be cleared after TakeVerifier")
-	}
-}
-
 func TestGrantState(t *testing.T) {
 	m, ctx := newCtx(t, &fakeRefresher{})
 	if _, _, ok := m.TakeGrantState(ctx); ok {
@@ -88,7 +65,7 @@ func TestLoginLogout(t *testing.T) {
 	if m.IsAuthenticated(ctx) {
 		t.Fatal("should start unauthenticated")
 	}
-	if err := m.Login(ctx, client.Tokens{AccessToken: "at", RefreshToken: "rt"}, "alice@testnet", Pin{}); err != nil {
+	if _, err := m.Login(ctx, client.Tokens{AccessToken: "at", RefreshToken: "rt"}, "alice@testnet", Pin{}); err != nil {
 		t.Fatal(err)
 	}
 	toks, ok := m.Tokens(ctx)
@@ -98,7 +75,7 @@ func TestLoginLogout(t *testing.T) {
 	if m.Address(ctx) != "alice@testnet" {
 		t.Errorf("address = %q", m.Address(ctx))
 	}
-	if t2, err := m.Logout(ctx); err != nil || t2 != toks {
+	if t2, err := m.Logout(ctx); err != nil || len(t2) != 1 || t2[0] != toks {
 		t.Fatalf("logout returned %+v, %v; want the pair it held", t2, err)
 	}
 	if m.IsAuthenticated(ctx) {
@@ -218,6 +195,7 @@ func TestExpiryJudgesBothLimits(t *testing.T) {
 		t.Fatal("at the idle limit the session is idled")
 	}
 
+	m.Logout(ctx)
 	m.Login(ctx, client.Tokens{AccessToken: "at", RefreshToken: "rt"}, "a", Pin{})
 	login := now
 	for now.Sub(login) < AgeLimit-10*time.Minute {
@@ -349,7 +327,7 @@ func TestAppCacheLivesInTheEntry(t *testing.T) {
 	if _, ok := m.AppCache(ctx, "chat"); ok {
 		t.Fatal("no entry holds nothing, and none is made")
 	}
-	if err := m.Login(ctx, client.Tokens{AccessToken: "a", RefreshToken: "r"}, "ann@k", Pin{}); err != nil {
+	if _, err := m.Login(ctx, client.Tokens{AccessToken: "a", RefreshToken: "r"}, "ann@k", Pin{}); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := m.AppCache(ctx, "chat"); ok {
@@ -364,7 +342,7 @@ func TestAppCacheLivesInTheEntry(t *testing.T) {
 		t.Fatal("each app's own")
 	}
 	put(m, ctx, "chat", "K3")
-	if err := m.Login(ctx, client.Tokens{AccessToken: "b", RefreshToken: "s"}, "bob@k", Pin{}); err != nil {
+	if _, err := m.Login(ctx, client.Tokens{AccessToken: "b", RefreshToken: "s"}, "bob@k", Pin{}); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := m.AppCache(ctx, "chat"); ok {
@@ -394,7 +372,7 @@ func put(m *Manager, ctx context.Context, app, value string) {
 // request has ended; and an ended session runs no update.
 func TestUpdateAppCacheIsOneStep(t *testing.T) {
 	m, ctx := newCtx(t, &fakeRefresher{})
-	if err := m.Login(ctx, client.Tokens{AccessToken: "a", RefreshToken: "r"}, "ann@k", Pin{}); err != nil {
+	if _, err := m.Login(ctx, client.Tokens{AccessToken: "a", RefreshToken: "r"}, "ann@k", Pin{}); err != nil {
 		t.Fatal(err)
 	}
 	var wg sync.WaitGroup
@@ -423,5 +401,187 @@ func TestUpdateAppCacheIsOneStep(t *testing.T) {
 	m.UpdateAppCache(ctx, "chat", func(string) string { ran = true; return "back" })
 	if _, ok := m.AppCache(ctx, "chat"); ok || ran {
 		t.Fatal("an ended session runs no update")
+	}
+}
+
+// A session holds every account its person signed in to, each with its own
+// tokens and caches, one in use; a sign-in to another adds it and puts it in
+// use, Use switches among them, and Logout ends them all.
+func TestASessionHoldsAccounts(t *testing.T) {
+	m, ctx := newCtx(t, &fakeRefresher{})
+	pin := Pin{PublicKey: "K", NetworkFingerprint: "F"}
+	if _, err := m.Login(ctx, client.Tokens{AccessToken: "a1", RefreshToken: "r1"}, "sys@k", pin); err != nil {
+		t.Fatal(err)
+	}
+	put(m, ctx, "chat", "sys's")
+	if _, err := m.Login(ctx, client.Tokens{AccessToken: "b1", RefreshToken: "s1"}, "helper@k", pin); err != nil {
+		t.Fatal(err)
+	}
+	if m.Address(ctx) != "helper@k" || strings.Join(m.Accounts(ctx), ",") != "sys@k,helper@k" {
+		t.Fatalf("in use %q of %v", m.Address(ctx), m.Accounts(ctx))
+	}
+	if toks, _ := m.Tokens(ctx); toks.AccessToken != "b1" {
+		t.Errorf("the account in use's tokens: %+v", toks)
+	}
+	if _, ok := m.AppCache(ctx, "chat"); ok {
+		t.Error("each account its own cache")
+	}
+	if m.Use(ctx, "nobody@k") || m.Address(ctx) != "helper@k" {
+		t.Fatal("only an account the session holds is put in use")
+	}
+	if !m.Use(ctx, "sys@k") || m.Address(ctx) != "sys@k" {
+		t.Fatal("Use switches")
+	}
+	if c, _ := m.AppCache(ctx, "chat"); c != "sys's" {
+		t.Errorf("the cache comes back with its account: %q", c)
+	}
+	if old, err := m.Login(ctx, client.Tokens{AccessToken: "b2", RefreshToken: "s2"}, "helper@k", pin); err != nil || old.RefreshToken != "s1" {
+		t.Errorf("a second sign-in to an account replaces its pair and returns the old one: %+v %v", old, err)
+	}
+	if len(m.Accounts(ctx)) != 2 {
+		t.Errorf("no account twice: %v", m.Accounts(ctx))
+	}
+	if _, err := m.Login(ctx, client.Tokens{AccessToken: "x", RefreshToken: "y"}, "ann@other", Pin{PublicKey: "K2"}); !errors.Is(err, ErrOtherKernel) {
+		t.Errorf("an account of another kernel is refused: %v", err)
+	}
+	pairs, err := m.Logout(ctx)
+	if err != nil || len(pairs) != 2 || pairs[0].RefreshToken != "r1" || pairs[1].RefreshToken != "s2" {
+		t.Errorf("Logout returns every pair: %+v %v", pairs, err)
+	}
+	if m.IsAuthenticated(ctx) || len(m.Accounts(ctx)) != 0 {
+		t.Error("one exit ends every account")
+	}
+}
+
+// Login and Use renew the session token (a change of privilege, OWASP's
+// session management rule), the entry moving with it.
+func TestSwitchingRenewsTheSessionToken(t *testing.T) {
+	m, ctx := newCtx(t, &fakeRefresher{})
+	m.Login(ctx, client.Tokens{AccessToken: "a", RefreshToken: "r"}, "sys@k", Pin{})
+	m.Login(ctx, client.Tokens{AccessToken: "b", RefreshToken: "s"}, "helper@k", Pin{})
+	before := m.sm.Token(ctx)
+	if !m.Use(ctx, "sys@k") {
+		t.Fatal("switch")
+	}
+	if m.sm.Token(ctx) == before || len(m.live) != 1 || !m.IsAuthenticated(ctx) {
+		t.Errorf("token renewed and the entry moved with it: %d entries", len(m.live))
+	}
+}
+
+// A request that began before a switch reads nothing after it, so no request
+// mixes two accounts; a stale save of the record cannot switch back, since the
+// account in use is not in the record; a refresh is stored on its own account.
+func TestNoRequestMixesTwoAccounts(t *testing.T) {
+	fr := &fakeRefresher{next: client.Tokens{AccessToken: "b2", RefreshToken: "s2"}}
+	m, ctx := newCtx(t, fr)
+	m.Login(ctx, client.Tokens{AccessToken: "a", RefreshToken: "r"}, "sys@k", Pin{})
+	m.Login(ctx, client.Tokens{AccessToken: "b", RefreshToken: "s"}, "helper@k", Pin{})
+	stale := request(t, m, ctx)
+	inflight := request(t, m, ctx)
+	if m.Address(inflight) != "helper@k" {
+		t.Fatal("before the switch")
+	}
+	if !m.Use(ctx, "sys@k") {
+		t.Fatal("switch")
+	}
+	if m.Address(inflight) != "" || m.IsAuthenticated(inflight) {
+		t.Errorf("a request in flight reads nothing after a switch: %q", m.Address(inflight))
+	}
+	if _, _, err := m.sm.Commit(stale); err != nil {
+		t.Fatal(err)
+	}
+	if m.Address(ctx) != "sys@k" {
+		t.Errorf("a stale save switched back: %q", m.Address(ctx))
+	}
+	m.Use(ctx, "helper@k")
+	var seen []string
+	_ = m.Do(ctx, func(tok string) error {
+		seen = append(seen, tok)
+		if tok == "b" {
+			return client.ErrUnauthenticated
+		}
+		return nil
+	})
+	m.Use(ctx, "sys@k")
+	if toks, _ := m.Tokens(ctx); strings.Join(seen, ",") != "b,b2" || toks.AccessToken != "a" {
+		t.Errorf("a refresh rotates its own account's pair alone: %v, sys's %+v", seen, toks)
+	}
+}
+
+// A consent begun by one account is refused to another account of the session.
+func TestAGrantStateIsItsAccounts(t *testing.T) {
+	m, ctx := newCtx(t, &fakeRefresher{})
+	m.Login(ctx, client.Tokens{AccessToken: "a", RefreshToken: "r"}, "sys@k", Pin{})
+	m.Login(ctx, client.Tokens{AccessToken: "b", RefreshToken: "s"}, "helper@k", Pin{})
+	m.PutGrantState(ctx, "S", "x@k/a")
+	m.Use(ctx, "sys@k")
+	if _, _, ok := m.TakeGrantState(ctx); ok {
+		t.Error("another account's consent")
+	}
+}
+
+// Creating an account while signed in keeps the session and its accounts.
+func TestAPhraseWhileSignedInKeepsTheAccounts(t *testing.T) {
+	m, ctx := newCtx(t, &fakeRefresher{})
+	m.Login(ctx, client.Tokens{AccessToken: "a", RefreshToken: "r"}, "sys@k", Pin{})
+	if err := m.PutRecoveryPhrase(ctx, "w1 w2"); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := m.TakeRecoveryPhrase(ctx); !ok || !m.IsAuthenticated(ctx) || m.Address(ctx) != "sys@k" {
+		t.Error("the phrase came and went; the session stayed")
+	}
+}
+
+// blockingRefresher holds a refresh at the kernel until released, and counts
+// revocations.
+type blockingRefresher struct {
+	entered, release chan struct{}
+	next             client.Tokens
+	mu               sync.Mutex
+	logouts          int
+}
+
+func (b *blockingRefresher) Refresh(context.Context, string) (client.Tokens, error) {
+	close(b.entered)
+	<-b.release
+	return b.next, nil
+}
+
+func (b *blockingRefresher) Logout(context.Context, string) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.logouts++
+	return nil
+}
+
+// A switch while one of the session's accounts is being refreshed moves the
+// entry to a new session token; the refresh still stores the rotated pair on
+// its account and revokes nothing, so the account stays usable.
+func TestASwitchDuringARefreshKeepsTheRotation(t *testing.T) {
+	b := &blockingRefresher{entered: make(chan struct{}), release: make(chan struct{}), next: client.Tokens{AccessToken: "b2", RefreshToken: "s2"}}
+	m, ctx := newCtx(t, b)
+	m.Login(ctx, client.Tokens{AccessToken: "a", RefreshToken: "r"}, "sys@k", Pin{})
+	m.Login(ctx, client.Tokens{AccessToken: "b", RefreshToken: "s"}, "helper@k", Pin{})
+	inflight := request(t, m, ctx)
+	done := make(chan error, 1)
+	go func() {
+		done <- m.Do(inflight, func(tok string) error {
+			if tok == "b" {
+				return client.ErrUnauthenticated
+			}
+			return nil
+		})
+	}()
+	<-b.entered
+	if !m.Use(ctx, "sys@k") {
+		t.Fatal("switch")
+	}
+	close(b.release)
+	if err := <-done; err != nil {
+		t.Fatalf("the refresh in flight: %v", err)
+	}
+	m.Use(ctx, "helper@k")
+	if toks, _ := m.Tokens(ctx); toks.RefreshToken != "s2" || b.logouts != 0 {
+		t.Errorf("the rotated pair reached its account and nothing was revoked: %+v, %d revocations", toks, b.logouts)
 	}
 }

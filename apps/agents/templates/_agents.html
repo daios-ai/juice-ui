@@ -1,26 +1,107 @@
 {{/*
-  Status block: rendered in each list row and on the detail page from the one
-  status view, and kept current by the page's heartbeat: the block carries a
-  watch naming its state, and the heartbeat's answer is this same block with
-  hx-swap-oob, replacing itself in place only when the state changed. It
-  carries its own Stop or Start form, so the CSRF field is threaded into the
-  view rather than taken from the Page envelope. A stopped agent shows its
-  daemon's exit error from the current run, the daemon's own words, as inert
-  text. Start is one click while the login has a session; with none it opens
-  the password dialog, which is on the agent page: there the trigger opens it
-  in place, and in a list row the anchor navigates to the page with it open
-  (the UI's modal fallback, app.js).
+  _agent_row — an agent in the fleet's record list (requirements §6.1): its
+  handle, linking to its page, and its one state pill; its balance; when it
+  last acted; and its commands, in one fixed order so each keeps its place:
+  Start or Stop, an icon in one slot; Fund; Switch to its account when the
+  session holds it, else Sign in, opening the layout's Sign in dialog with its
+  handle filled in, either carrying the count of decisions waiting on it.
+  What one job needs, what is parked and a stopped agent's exit line are its
+  page's. The pill and the commands are kept by the heartbeat (_agent_state,
+  _agent_commands). Input: card.
 */}}
-{{define "_agent_status"}}
-<div class="row compact" id="agent-status-{{.Handle}}"{{if .OOB}} hx-swap-oob="true"{{end}}>
-<input type="hidden" name="watch" value="agent:{{.Handle}}:{{.State}}">
-{{if .Running}}
-<span class="pill">running</span>
-<form method="post" action="/agents/{{.Handle}}/stop" data-confirm="Stop {{.Handle}}?">{{.CSRF}}<button class="btn-danger" type="submit">Stop</button></form>
-{{else}}
-<span class="muted small">stopped</span>
-{{if .AskPassword}}<a class="btn" href="/agents/{{.Handle}}?form=start" data-modal="form-start">Start</a>{{else}}<form method="post" action="/agents/{{.Handle}}/start">{{.CSRF}}<button class="btn" type="submit">Start</button></form>{{end}}
-{{with .LastLine}}<span class="muted small">{{.}}</span>{{end}}
+{{define "_agent_row"}}
+<tr>
+  <td><a class="ref mono" href="/agents/{{.Handle}}">{{.Handle}}</a> {{template "_agent_state" .}}</td>
+  <td class="money" data-label="Balance">{{with .Account}}{{money .Available}}{{end}}</td>
+  <td data-label="Active">{{with .Self.LastActive}}{{relTime .}}{{else}}never{{end}}</td>
+  <td class="row-actions">{{template "_agent_commands" .}}</td>
+</tr>
 {{end}}
-</div>
+
+{{/* _agent_state — an agent's pill, with the watch naming its program's
+     state: the heartbeat answers it and _agent_commands, out of band, only
+     when that state or the exit line changed. Input: card. */}}
+{{define "_agent_state"}}<span id="agent-state-{{.Handle}}"{{if .OOB}} hx-swap-oob="true"{{end}}><input type="hidden" name="watch" value="agent:{{.Handle}}:{{.State}}">{{template "_agent_pill" .}}</span>{{end}}
+
+{{/* _agent_commands — an agent's commands in the fleet's list. Input: card. */}}
+{{define "_agent_commands"}}<div class="cluster" id="agent-commands-{{.Handle}}"{{if .OOB}} hx-swap-oob="true"{{end}}>
+  {{if .Running}}
+  <form method="post" action="/agents/{{.Handle}}/stop" data-confirm="Stop {{.Handle}}?">{{.CSRF}}<button class="btn-icon btn-danger" type="submit" aria-label="Stop {{.Handle}}" title="Stop"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#square"/></svg></button></form>
+  {{else}}
+  <a class="btn-icon" href="/agents?form=start&handle={{.Handle}}" data-modal="form-start-{{.Handle}}" aria-label="Start {{.Handle}}" title="Start"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#play"/></svg></a>
+  {{end}}
+  {{with .Account}}
+  <a class="btn" href="/agents?form=fund&handle={{$.Handle}}" data-modal="form-fund-{{$.Handle}}">Fund</a>
+  {{$sw := switchTo $.Accounts .Address.Address "Switch" "btn" $.Self.Decisions $.CSRF}}
+  {{if $sw.Held}}{{template "_switch" $sw}}{{else}}<a class="btn" href="?form=signin&handle={{$.Handle}}" data-modal="signin" data-fill="{{$.Handle}}">Sign in{{with $.Self.Decisions}}<span class="badge" aria-label="Waiting">{{.}}</span>{{end}}</a>{{end}}
+  {{end}}
+</div>{{end}}
+
+{{/*
+  _agent_dialogs — the dialogs of an agent's commands in the fleet's list, one
+  set per agent, its handle in their ids: Start, asking for the agent's
+  password every time; Fund, then its review naming what the operator pays,
+  carrying the transfer's quote and the key it is sent under, so it moves
+  money once. Without script a command's link opens the list with that
+  dialog open. Input: card.
+*/}}
+{{define "_agent_dialogs"}}
+{{$h := .Handle}}
+<dialog id="form-start-{{$h}}" class="modal-form"{{if eq .OpenForm "start"}} open{{end}} aria-label="Start {{$h}}">
+  <div class="modal-head"><h2>Start {{$h}}</h2><a class="modal-close" href="/agents" data-modal-close aria-label="Close">×</a></div>
+  <div class="modal-body">
+    {{if eq .OpenForm "start"}}{{with .Error}}{{template "_error" .}}{{end}}{{end}}
+    <form class="stack" method="post" action="/agents/{{$h}}/start">
+      {{.CSRF}}
+      <div class="field">
+        <label for="start-password-{{$h}}">Password</label>
+        <input id="start-password-{{$h}}" type="password" name="password" autocomplete="current-password" required>
+      </div>
+      <button class="btn-primary" type="submit">Start</button>
+    </form>
+  </div>
+</dialog>
+{{with .Account}}
+<dialog id="form-fund-{{$h}}" class="modal-form"{{if eq $.OpenForm "fund"}} open{{end}} aria-label="Fund {{$h}}">
+  <div class="modal-head"><h2>Fund {{$h}}</h2><a class="modal-close" href="/agents" data-modal-close aria-label="Close">×</a></div>
+  <div class="modal-body">
+    {{with $.Fund.Error}}{{template "_error" .}}{{end}}
+    <form class="stack" method="post" action="/agents/{{$h}}/fund/review">
+      {{$.CSRF}}
+      <div class="field">
+        <label for="fund-amount-{{$h}}">Amount</label>
+        <input id="fund-amount-{{$h}}" name="amount" type="number" min="0" step="{{amountStep}}" class="input-sm" value="{{$.Fund.Typed}}" required>
+      </div>
+      <div class="cluster">
+        <button class="btn-primary" type="submit">Review</button>
+        <button type="button" class="btn" data-modal-close>Cancel</button>
+      </div>
+    </form>
+  </div>
+</dialog>
+{{if eq $.OpenForm "fund-review"}}
+<dialog id="form-fund-review-{{$h}}" class="modal-form" open aria-label="Fund {{$h}}">
+  <div class="modal-head"><h2>Fund {{$h}}</h2><a class="modal-close" href="/agents" data-modal-close aria-label="Close">×</a></div>
+  <div class="modal-body">
+    {{with $.Fund.Error}}{{template "_error" .}}{{end}}
+    <form class="stack" method="post" action="/agents/{{$h}}/fund">
+      {{$.CSRF}}
+      <input type="hidden" name="amount" value="{{$.Fund.Typed}}">
+      <input type="hidden" name="quote" value="{{$.Fund.Quote}}">
+      <input type="hidden" name="key" value="{{$.Fund.Key}}">
+      <input type="hidden" name="price" value="{{$.Fund.Price}}">
+      <dl class="kv"><dt>To {{$h}}</dt><dd class="money">{{moneyExact $.Fund.Amount}}</dd><dt>Transfer</dt><dd class="money">{{moneyExact $.Fund.Price}}</dd></dl>
+      <div class="cluster">
+        <button class="btn-money" type="submit">Fund ({{moneyExact $.Fund.Total}})</button>
+        <button type="button" class="btn" data-modal-close>Cancel</button>
+      </div>
+    </form>
+  </div>
+</dialog>
 {{end}}
+{{end}}
+{{end}}
+
+{{/* _agent_pill — the agent's one state word: stopped, else what stops it
+     working, else running. Input: status. */}}
+{{define "_agent_pill"}}{{if eq .Pill "running"}}<span class="pill status-credited">running</span>{{else if eq .Pill "stopped"}}<span class="pill">stopped</span>{{else}}<span class="pill status-danger">{{.Pill}}</span>{{end}}{{end}}

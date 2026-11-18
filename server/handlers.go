@@ -21,7 +21,6 @@ import (
 	"github.com/daios-ai/juice-ui/client"
 	"github.com/daios-ai/juice-ui/session"
 	"github.com/daios-ai/juice-ui/wallet"
-	"github.com/gorilla/csrf"
 	"golang.org/x/text/unicode/norm"
 )
 
@@ -290,9 +289,12 @@ type errorView struct{ Message string }
 
 // ---- auth ----
 
+// getLogin is the entry screen of a signed-out visitor; a signed-in one is
+// sent to its landing, since a signed-in session signs in to another account
+// through the Sign in dialog (requirements §5).
 func (s *Server) getLogin(w http.ResponseWriter, r *http.Request) {
 	if s.sessions.IsAuthenticated(r.Context()) {
-		http.Redirect(w, r, s.landing(), http.StatusSeeOther)
+		http.Redirect(w, r, s.landing(r), http.StatusSeeOther)
 		return
 	}
 	view := loginView{Tab: loginTab(r)}
@@ -304,27 +306,51 @@ func (s *Server) getLogin(w http.ResponseWriter, r *http.Request) {
 	s.renderPage(w, r, http.StatusOK, "login", "Sign in", view)
 }
 
+// postLogin is the one sign-in: the entry screen's and the Sign in dialog's.
+// A refusal on the entry screen renders it again; in the dialog it answers
+// the dialog open with the reason and the handle typed, and without script it
+// is a flash on the page the dialog stood over, the dialog open.
 func (s *Server) postLogin(w http.ResponseWriter, r *http.Request) {
+	signedIn := s.sessions.IsAuthenticated(r.Context())
 	if err := s.doLogin(r.Context(), s.entryAddress(r), r.FormValue("password")); err != nil {
 		s.log.Warn("login failed", "err", err)
-		s.renderPage(w, r, http.StatusOK, "login", "Sign in", loginView{Tab: "signin", Error: loginErrorMessage(err)})
+		msg := loginErrorMessage(err)
+		handle := strings.TrimSpace(r.FormValue("handle"))
+		switch {
+		case !signedIn:
+			s.renderPage(w, r, http.StatusOK, "login", "Sign in", loginView{Tab: "signin", Error: msg})
+		case isHTMX(r):
+			_ = s.render.Fragment(w, http.StatusOK, "_signin", signInView{Open: true, Handle: handle, Error: msg, Path: refererPath(r), CSRFField: s.csrfField(r)})
+		default:
+			s.flashRedirect(w, r, refererPath(r)+"?form=signin&handle="+url.QueryEscape(handle), "error", msg)
+		}
 		return
 	}
-	http.Redirect(w, r, s.landing(), http.StatusSeeOther)
+	hxRedirect(w, r, s.landing(r))
 }
 
-// landing is where a session begins: its conversations (requirements §6.1),
-// else the catalog.
-func (s *Server) landing() string {
-	if s.conv != nil {
-		return s.conv.Landing()
+// postSwitch puts another account the session holds in use (the avatar menu,
+// an agent's Switch), and opens where that account begins.
+func (s *Server) postSwitch(w http.ResponseWriter, r *http.Request) {
+	if !s.sessions.Use(r.Context(), r.FormValue("address")) {
+		s.flashRedirect(w, r, "/", "error", "That account is not signed in here.")
+		return
+	}
+	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+// landing is where a session begins: the account's conversations
+// (requirements §6.1), else the catalog.
+func (s *Server) landing(r *http.Request) string {
+	if c := s.conversations(r); c != nil {
+		return c.Landing()
 	}
 	return "/browse"
 }
 
 // getRoot sends the root address to where a session begins.
 func (s *Server) getRoot(w http.ResponseWriter, r *http.Request) {
-	http.Redirect(w, r, s.landing(), http.StatusSeeOther)
+	http.Redirect(w, r, s.landing(r), http.StatusSeeOther)
 }
 
 func (s *Server) postSignup(w http.ResponseWriter, r *http.Request) {
@@ -478,10 +504,10 @@ func (s *Server) entryAddress(r *http.Request) string {
 	return s.identity.Address(strings.TrimSpace(r.FormValue("handle")))
 }
 
-// doLogin runs the PKCE authorization-code flow: the verifier is generated and
-// kept server-side, the challenge is sent to authorize, the returned code is
-// exchanged with the verifier, and the resulting tokens are stored in the
-// session (R5.1) together with the kernel they are for (§5).
+// doLogin signs in (client.SignIn, R5.1) and adds the account to the session
+// with the kernel it is for (§5), in use from now on. A pair an earlier
+// sign-in to the same account held is revoked, and so is the new one when the
+// session refuses it.
 //
 // The kernel is identified BEFORE the credential is sent: a login is only
 // meaningful against a server we can name, and pinning it after the fact would
@@ -491,26 +517,21 @@ func (s *Server) doLogin(ctx context.Context, address, password string) error {
 	if id.PublicKey == "" {
 		return client.ErrUnavailable
 	}
-	challenge, err := s.sessions.BeginPKCE(ctx)
+	tokens, err := s.client.SignIn(ctx, address, password)
 	if err != nil {
 		return err
 	}
-	code, err := s.client.Authorize(ctx, address, password, challenge)
-	if err != nil {
-		return err
-	}
-	verifier, ok := s.sessions.TakeVerifier(ctx)
-	if !ok {
-		return fmt.Errorf("pkce verifier missing from session")
-	}
-	tokens, err := s.client.ExchangeCode(ctx, code, verifier)
-	if err != nil {
-		return err
-	}
-	return s.sessions.Login(ctx, tokens, address, session.Pin{
+	old, err := s.sessions.Login(ctx, tokens, address, session.Pin{
 		PublicKey:          id.PublicKey,
 		NetworkFingerprint: id.NetworkFingerprint,
 	})
+	if err != nil {
+		old = tokens // not added: the pair just issued is revoked
+	}
+	if old.RefreshToken != "" {
+		_ = s.client.Logout(context.WithoutCancel(ctx), old.RefreshToken)
+	}
+	return err
 }
 
 func (s *Server) postLogout(w http.ResponseWriter, r *http.Request) {
@@ -821,13 +842,30 @@ func grantTarget(r *http.Request) (selector, provider string) {
 // addressed by ?selector=…) from the request's Referer, or /settings as a fallback.
 // Only a same-host path is honored, never an absolute/off-site URL.
 func backTo(r *http.Request) string {
-	if ref, err := url.Parse(r.Header.Get("Referer")); err == nil && ref.Path != "" && (ref.Host == "" || ref.Host == r.Host) {
+	if ref := referer(r); ref != nil {
 		if ref.RawQuery != "" {
 			return ref.Path + "?" + ref.RawQuery
 		}
 		return ref.Path
 	}
 	return "/settings"
+}
+
+// refererPath is the path of the same-origin page a form was sent from, or
+// the root.
+func refererPath(r *http.Request) string {
+	if ref := referer(r); ref != nil {
+		return ref.Path
+	}
+	return "/"
+}
+
+// referer is the request's Referer when it is a page of this origin.
+func referer(r *http.Request) *url.URL {
+	if ref, err := url.Parse(r.Header.Get("Referer")); err == nil && ref.Path != "" && (ref.Host == "" || ref.Host == r.Host) {
+		return ref
+	}
+	return nil
 }
 
 func (s *Server) postTheme(w http.ResponseWriter, r *http.Request) {
@@ -962,7 +1000,7 @@ func (s *Server) postSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	forgetMe(r) // a pinned lookup moved the viewer's money
-	view.CSRFField = csrf.TemplateField(r)
+	view.CSRFField = s.csrfField(r)
 	_ = s.render.Fragment(w, http.StatusOK, "_search_panel", view)
 }
 
@@ -1174,7 +1212,7 @@ func (s *Server) getTasks(w http.ResponseWriter, r *http.Request) {
 			return e
 		}
 		for _, t := range page {
-			row := taskRow{Task: t, Answer: t.Owner.Address == view.Me && t.TxID != "", CSRFField: csrf.TemplateField(r)}
+			row := taskRow{Task: t, Answer: t.Owner.Address == view.Me && t.TxID != "", CSRFField: s.csrfField(r)}
 			switch {
 			case view.Tab == "sent" && t.Owner.Address == view.Me && t.RequiredCaller.Address != view.Me:
 				row.Other, row.Cancel = t.RequiredCaller, canDecline(t, view.Me)
@@ -1267,11 +1305,6 @@ func (s *Server) taskEntryOf(t client.Task, me string) taskEntry {
 func canDecline(t client.Task, me string) bool {
 	return t.Waiting() && (t.RequiredCaller.Address == me || t.Owner.Address == me)
 }
-
-const (
-	sessionKeyBadgeCount = "tasks.badge.count"
-	sessionKeyBadgeAt    = "tasks.badge.at"
-)
 
 // getHealth is juice-ui's own liveness probe and the browser heartbeat target: it
 // asks the kernel's open /health (no token). A plain probe gets 200 / 503; a
@@ -1407,7 +1440,7 @@ func (s *Server) actionView(r *http.Request, tok string, load loader) (actionVie
 		CanManage:    s.manages(r, me, a),
 		IsPaid:       a.Price > 0,
 		NeedsConnect: needsConnect(a, grantedRefs(me)),
-		CSRFField:    csrf.TemplateField(r),
+		CSRFField:    s.csrfField(r),
 	}
 	// First-payee hint on the run form (§8.3): shown unless the viewer has
 	// already transacted with this action's owner. Bounded, best-effort.
@@ -1518,7 +1551,7 @@ func (s *Server) postRun(w http.ResponseWriter, r *http.Request) {
 				out.Reserved = a.Price
 			}
 			view.Outcome = &out
-			view.Outcome.CSRFField = csrf.TemplateField(r)
+			view.Outcome.CSRFField = s.csrfField(r)
 		}
 		return nil
 	})
@@ -2289,7 +2322,7 @@ func (s *Server) getProcesses(w http.ResponseWriter, r *http.Request) {
 		Open:      open,
 		Closed:    filterStatus(page, "open", false),
 		Superuser: s.isSuperuser(r),
-		CSRFField: csrf.TemplateField(r),
+		CSRFField: s.csrfField(r),
 		Pager:     pageNav(r, queryOffset(r), pageSize, more),
 	})
 }
@@ -2480,7 +2513,7 @@ func (s *Server) postCompleteTask(w http.ResponseWriter, r *http.Request) {
 			return e
 		}
 		outcome = out
-		outcome.CSRFField = csrf.TemplateField(r)
+		outcome.CSRFField = s.csrfField(r)
 		return nil
 	})
 	if s.handleErrFragment(w, r, err) {
@@ -2526,8 +2559,8 @@ func (s *Server) postRequester(w http.ResponseWriter, r *http.Request) {
 	address := r.PathValue("address")
 	var handled bool
 	var err error
-	if verb == "approve" && s.conv != nil {
-		if handled, err = s.conv.Approve(r, address); err != nil && !isAuthErr(err) {
+	if c := s.conversations(r); verb == "approve" && c != nil {
+		if handled, err = c.Approve(r, address); err != nil && !isAuthErr(err) {
 			s.flashRedirect(w, r, back, "error", err.Error()) // the app's own sentence
 			return
 		}
@@ -3233,8 +3266,8 @@ func (s *Server) postFill(w http.ResponseWriter, r *http.Request) {
 			return e
 		}
 		msgs := []client.Message{{Role: "system", Content: fillInstruction}}
-		if room != "" && s.conv != nil {
-			said, e := s.conv.Context(r, room)
+		if c := s.conversations(r); room != "" && c != nil {
+			said, e := c.Context(r, room)
 			if e != nil {
 				return e
 			}

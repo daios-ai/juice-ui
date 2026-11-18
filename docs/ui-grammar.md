@@ -29,7 +29,7 @@ Three laws underpin everything:
 | Button | `.btn` (the one neutral) · `.btn-money` · `.btn-danger` · `.btn-icon` · `.btn-send` (the composer's alone) | actions |
 | **Tabs** | `.tabs` + `.tab` | **the** view switch — login sign in/create toggle *and* in-content list filters |
 | Menu | `.menu` + `.menu-item` (`[data-menu]` trigger) | dropdowns & popovers, incl. "+ new …" |
-| Card / list / table | `.card` · `.card-list` · `.action-list` + `.action-row` · `table` (`.rowable`, `.stats-table`, `td.row-actions`) | containers & data |
+| Card / list / table | `.card` · `.card-list` · `.action-list` + `.action-row` · `table` (`.rowable`, `.stats-table`, `td.row-actions`) · `table.records` (a list of records of one kind, stacked when narrow) | containers & data |
 | **Media** | `.media` (16:9 slot) · `.media.tile` (square) · `_media` / `_tile` partials · `cardArt` fallback | the action image (§5.13) |
 | **Figures** | `.stat-row` + `.stat` (label · value) · `_figures` partial | **the** headline money figures, one block each — label, mono amount coloured by its signal. One component on the wallet and a session |
 | **Pager** | `.pager` + `_pager` partial | quiet offset pagination under any long list (20/page) |
@@ -70,7 +70,9 @@ The frame every page renders into: the collaborative workspace
 | Region | Contents | Rules |
 |---|---|---|
 | **Sidebar** | brand (kernel and world) and the collapse toggle; the **rail** (its opener, `#plus` and "New room", then the requests and the rooms); the **avatar** at the foot | One element, sticky, the visible screen's height (`100dvh`), 240px. The width picks one of two models, never mixed. **Wide (>720px): docked or a strip.** Collapsed, the same element keeps only the toggle, the opener's icon and the avatar with its badge; the brand, the requests, the rooms and the handle are hidden, since a list of names has no icon form. The state is persisted server-side (`sidebar` cookie on `<html data-sidebar>`, no flash) and applies to wide screens only. **Narrow (≤720px): a drawer** (Topbar). |
-| **Avatar menu** | the address and the available balance; every destination of the registry, the current one `aria-current`, Inbox with the task badge; Sign out | A `.menu` from the avatar (`[data-menu]`), each destination an icon and its name. The avatar carries the task badge too. |
+| **Avatar menu** | the address in use and the available balance; the session's other accounts, then **Sign in**, opening the Sign in dialog; every destination of the registry, the current one `aria-current`, Inbox with the task badge; Sign out, which ends every account | A `.menu` from the avatar (`[data-menu]`), each destination an icon and its name; each other account a `.menu-item` of its avatar initial and its address, switching to it (`_switch`). The avatar carries the task badge too. |
+| **Account switch** | `_switch` (`switchTo accounts address label class count csrf`) | **the one** control that puts an account the session holds in use (requirements §5): a form posting `/switch` whose button is a menu row or a `.btn`, with a `.badge` of what waits on that account. The avatar menu and an agent's card use it; for an agent the session does not hold, the card's **Sign in** opens the Sign in dialog with its handle filled in |
+| **Sign in dialog** | `_signin` (`signInView`) · `_signin_fields` | the one dialog by which a signed-in session signs in to another account of this kernel (requirements §5), drawn once by the layout outside the sidebar, posting `/login` by htmx; a refusal answers it open (OOB) with the reason and the handle. A trigger opens it with `data-modal="signin"`; its `data-fill` fills the handle (`[data-modal-fill]`) and focuses the password. `_signin_fields` is the handle and password of the entry screen too |
 | **Main area** | the content container, a one-shot notice heading it | Container: `max-width ~1160px`, centered. **The container is the ONLY width decision**: every component fills it — no per-component `max-width` caps. |
 | **page-head** | the title only — no subtitle, no commands (§3, §5.3) | Present on every **index** page. Commands sit inline with their content. |
 | **Notice** | one transient message | A `.banner` of its kind first in the container, from a one-shot cookie, led by its kind's icon (`#alert`, `#check`); × dismisses it (`[data-dismiss]`, a link to the page itself without script); `role=alert` (error) / `status`. Not a feed.. A page that scrolls to its end on load (a room) does not when a notice heads it: the result is read first, where it stands |
@@ -262,7 +264,7 @@ one is the action Enter presses.
 | `.btn` | **the neutral** | transparent + border, weight 500 | every other button: a command standing alone (approve, start, stop, inspect, rename…), navigation, add-row, `Back`, and **Cancel** — always `<button type="button" class="btn" data-modal-close>`, never a link (the dialog's × link is the no-JS way out; `TestCancelIsOneButton`) |
 | `.btn-money` | **money movement** (solid accent) | `--accent` / `--accent-contrast`, weight 600 | run/pay, deposit, withdraw, and a priced planner's `Choose for me (N)` — **names the amount in parens** as `verb (N)` (e.g. `Run (12)`, `Synthesize (20)`); the accent color conveys it's credits, so **no credit glyph on the button**. An **ordinary task completion is NOT a money button** — it is the neutral `.btn` reading `Complete` (no amount): the completer does the work, but the money was reserved by the task's creator, so `Complete (N)` would falsely read as "you pay N". A **payment task** (its target bears the kernel's `effect="transfer"`, requirements.md §6.3) IS a spend of the completer's own balance and uses `.btn-money` naming the all-in amount |
 | `.btn-danger` | **critical** (solid danger) | `--danger` / `--danger-contrast`, weight 600 | delete, suspend, force-end, decline a task |
-| `.btn-icon` | icon-only | — | icon buttons, a `--control-h` square; **MUST carry `aria-label`**. `.btn-icon.inline`, borderless and muted at `--space-5`, inside a row or a line of text (a row's menu trigger, the copy control) |
+| `.btn-icon` | icon-only | — | icon buttons, a `--control-h` square; **MUST carry `aria-label`**. `.btn-icon.inline`, borderless and muted at `--space-5`, inside a row or a line of text (a row's menu trigger, the copy control). `.btn-icon.btn-danger` is the destructive tier in icon form (an agent's Stop, `#square`) |
 | `.btn-send` | the composer's send (room alone) | `--text` / `--bg`, round, icon-only | the bar's one primary act, `.btn-primary`'s fill in the composer's round icon form, part of the composer exception; disabled while the box is empty. Never the accent: sending moves no money |
 
 **One geometry, one row, one look.**
@@ -510,8 +512,6 @@ separates it from the content above, and nothing else does (§4).
     meaning lives in its `title`, which is also its accessible label. **Chips
     are colorless** — no theme hue is spent on them (every hue is a reserved
     money/trust signal); emphasis is by weight (`.chip.filled`), never by hue.
-  - The peer roster and the agents page use the same row, text only, their
-    title line a flex `.action-line`.
 - **Tables:** full width, hairline row borders, muted `th`. A navigable row is
   `.rowable` + `tabindex="-1"` + `data-href`: `j`/`k` move to it and `Enter`
   follows it. Its **link is the pointer target** — the row shows no pointer
@@ -525,6 +525,38 @@ separates it from the content above, and nothing else does (§4).
   is that cell.
 - **Every table lives in a `.table-scroll`** (`overflow-x: auto`) so a wide
   table scrolls inside its own box and the page body never scrolls sideways.
+- **A record list** (`table.records`) is **the one list of records of one
+  kind**: Admin's users, the fleet's agents, the network's kernels — the
+  *resource list* of Shopify Polaris's IndexTable, AWS Cloudscape's
+  collection and IBM Carbon's data table. A record is a row: its **name and
+  state first** (`_name` or a link, and a `.pill` only when the state says
+  something), then **a few figures** in headed columns, numbers right-aligned
+  (`.money`, `.num`), then its **commands**, `td.row-actions`, few and the
+  most used; everything else is the record's page. No tile, no description,
+  no strip. Wide, it is a table. **Narrow (≤720px) each row stacks**
+  (NN/g, *Mobile Tables*): the header row goes; the first cell is the top
+  line; every cell between carries `data-label`, its column's header, drawn as
+  the line's muted label beside its value, and an empty cell is no line; the
+  commands are the last line. A test holds the contract
+  (`TestRecordListsAreLabelled`). The users' row: address and `suspended`;
+  Available, Parked; Rename, Suspend or Unsuspend. The agents' and the
+  kernels' rows: below.
+  - **An agent's row** (`_agent_row`): its handle, linking to its page, and its
+    one pill (`stopped` neutral, `running` credited, what stops it working
+    danger); Balance; Active (when it last acted); its commands in one order —
+    Start (`.btn-icon`, `#play`) or Stop (`.btn-icon.btn-danger`, `#square`),
+    one slot; Fund; Switch, or Sign in for an account not held, with the
+    decisions' `.badge`. The list is the fleet's control pane: an agent's
+    commands are there alone. Their dialogs (`_agent_dialogs`) are one set per
+    agent, ids suffixed by its handle. The pill (`_agent_state`, carrying the
+    watch) and the commands (`_agent_commands`) are elements with ids inside
+    their cells, which the heartbeat answers out of band when the program's
+    state changed, since a bare `tr` cannot travel among other fragments.
+    **An agent's page** is its `h1` and pill, a `dl.kv` of what the row leaves
+    out — balance, parked, model at its call price, budget per job, last
+    active, a stopped agent's exit line — then **Settings**, a `.you-list` of
+    rows (instructions, configuration, a kept password, delete when stopped),
+    each one command, every edit a dialog.
 - **Chat is the workspace.** `/chat` opens the viewer's newest room; a viewer
   with no room at all gets one with the assistant, `New room`; the rooms are
   the sidebar's **rail**. A room is `.room`: the
@@ -729,7 +761,7 @@ task, a ledger entry), the name alone stands: the kernel serves no title there.
 | `.live-region` toast | **the one** polite `aria-live` region — ephemeral, auto-dismiss, **no history, no stack, no feed** |
 | `[aria-busy]` on a button | a command in flight (§5.1): a spinner in place of the button's label and icon, at its own size |
 | `.progress` | indeterminate bar for a long call with a label, standing where its result will appear, one partial, `_progress` (id, label): Run's below its form, a form tool's in the form's top row; shown in flight, `.htmx-request`, set by htmx on an `hx-indicator` or by the script owning a fetch |
-| `.badge` | round, accent — the task count, the **sole** count of the core surface: on the avatar, the menu's Inbox row (inline) and the topbar's trigger, every copy swapped at once by the heartbeat (`.badge-inbox`), **empty when zero** (`.badge:empty` hides it) |
+| `.badge` | round, accent — the task count, the **sole** count of the core surface: on the avatar, the menu's Inbox row (inline) and the topbar's trigger, every copy swapped at once by the heartbeat (`.badge-inbox`), **empty when zero** (`.badge:empty` hides it). An app's own count rides its menu row alone, as the Agents row's decisions waiting (`.badge-agents`) |
 | `.update-notice` | the one standing notice: the superuser's `Update to 0.69.0` above the avatar while a newer release is out, kept by the heartbeat as the badge is, gone while an update runs. Neutral, never the accent: updating moves no money |
 | `.unread` | a rail room with unseen activity: weighted, so it reads as "new" |
 
@@ -738,10 +770,10 @@ task, a ledger entry), the name alone stands: the kernel serves no title there.
 `admin` (users, money, access) and `network` (federation) are **two separate
 top-level nav entries** (`sys` only), not one page with a sub-nav — federation
 is a distinct concern. The `network` page leads with **this kernel's money**
-through `_figures` (§5.6), then the obligations, then **one list** of every
-known kernel in the action row's grammar (§5.5): **this kernel**, then its
+through `_figures` (§5.6), then the obligations, then **one record list**
+(§5.5, `_kernel_row`) of every known kernel: **this kernel**, then its
 **counterparties**, then the **known network**, each class in the kernel's
-order, paged and never polled. A class is a neutral `.pill` on the title line —
+order, paged and never polled. A class is a neutral `.pill` beside its name —
 `this kernel`, `party`; a known kernel carries no mark. There is **no
 subscribe/unsubscribe verb**; the one opener is **inspect a kernel by key**,
 beside the Show/Hide-suspended toggle.
@@ -749,19 +781,22 @@ beside the Show/Hide-suspended toggle.
 A peer's row is `.rowable` and opens its page (`/admin/peers/{key}`), where it
 is named and suspended (suspension freezes the kernel row, so every kernel's
 page offers it); a suspended
-counterparty is dimmed (`.action-row.inactive`) and keeps its `suspended`
-danger pill. This kernel's row is titled with its own handle and links nowhere,
+kernel says so by its `suspended` danger pill, never faded. Its columns are
+Actions (the size of its catalog) and Seen (`last_seen`, relative, `never`
+until an exchange has succeeded): catalog freshness, never a verdict on
+whether it is up; its key, its about and its contact are its page's. This
+kernel's row states none of them; it is titled with its own handle and links nowhere,
 because it is this page. A named row carries **no verb**, as a result row
-carries none; a row titled by its key carries the one verb, `Name` — the same
-`.btn` as on the kernel's page — at the end of its title line (the price's
-slot, `margin-left: auto`), linking into its page with the rename modal open:
+carries none; a row no petname names carries the one verb, `Name` — the same
+`.btn` as on the kernel's page — in its commands cell, linking into its page
+with the rename modal open:
 the verb appears exactly where the gap it fills is visible.
 
 **The key has one spelling**: `client.ShortKey` (the first 10 characters, `…`,
 the last 4; the whole key in `title`), wherever a key is named, alone or in an
-address. A row whose label is its key has that spelling as its title and no
-ref line; any other row's `.action-ref` is that spelling. `truncate` never
-touches a key.
+address. A row whose label is its key has that spelling as its name; a
+named row shows no key, which its page states. `truncate` never touches a
+key.
 
 **A party has one rendering**, `_name` (§5.7), wherever a user, a kernel or an
 action's owner is named: its label (`client.Party.Label`, below), the whole
@@ -774,23 +809,6 @@ keys have claimed that nickname; a status line of a room ("Waiting on …", "Not
 delivered to …") is a sentence, compact. A question deciding something about a
 party names it by `client.Party.Shown`, the label and that key. A row that is
 itself a button or a link copies from its menu (`Copy address`).
-
-**The kernel strip** (`_kernel_strip`, `KernelStrip`) ends every peer row, in
-the grammar of an icon and a value per slot, the meaning in `title`,
-`·` between slots, a muted `none` where a slot has nothing. This kernel's row
-carries none — the roster states nothing about it — and the kernel's page
-carries none: a strip is for comparing rows, and a page states its facts with
-labels.
-
-| slot | icon | value |
-|---|---|---|
-| catalog | `#layers` | public actions in its catalog |
-| verified | `#clock` | `last_seen`, relative |
-| failed | `#x-mark` | `last_contact_failed_at`, relative |
-
-The strip keeps the action strip's flex rule: its guarantee is fixed slot
-order and fixed icons, not column alignment, and a grid variant would be a
-second layout of one component.
 
 **Naming is a petname system** (kernel §13, after Stiegler), and the three name
 classes render differently because they are trusted differently:

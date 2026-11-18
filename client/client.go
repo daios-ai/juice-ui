@@ -18,6 +18,9 @@ package client
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -681,10 +684,44 @@ func (c *Client) Health(ctx context.Context) (Health, error) {
 
 // ---- authentication ----
 
-// Authorize performs the PKCE authorize step. We omit redirect_uri so the kernel
+// SignIn signs in to address with its password by the kernel's
+// authorization-code flow with PKCE (RFC 7636): a fresh verifier, its S256
+// challenge sent to authorize, the code exchanged with the verifier. It is the
+// one sign-in of this repository: a browser session, an agent's login and a
+// service account all come through it. The verifier lives within the call.
+func (c *Client) SignIn(ctx context.Context, address, password string) (Tokens, error) {
+	verifier, err := newVerifier()
+	if err != nil {
+		return Tokens{}, err
+	}
+	code, err := c.authorize(ctx, address, password, challenge(verifier))
+	if err != nil {
+		return Tokens{}, err
+	}
+	return c.exchangeCode(ctx, code, verifier)
+}
+
+// newVerifier returns a PKCE code verifier: 32 random bytes, base64url-encoded
+// without padding (43 chars), drawn from crypto/rand.
+func newVerifier() (string, error) {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(b), nil
+}
+
+// challenge derives the S256 code challenge: base64url(sha256(verifier))
+// without padding.
+func challenge(verifier string) string {
+	sum := sha256.Sum256([]byte(verifier))
+	return base64.RawURLEncoding.EncodeToString(sum[:])
+}
+
+// authorize performs the PKCE authorize step. We omit redirect_uri so the kernel
 // answers 200 with {"redirect":"?code=..."} (verified live); the code is parsed
-// out of that query. password and code_challenge (S256) are passed through.
-func (c *Client) Authorize(ctx context.Context, handle, password, codeChallenge string) (string, error) {
+// out of that query.
+func (c *Client) authorize(ctx context.Context, handle, password, codeChallenge string) (string, error) {
 	body := map[string]string{
 		"handle":         handle,
 		"password":       password,
@@ -713,8 +750,8 @@ func codeFromRedirect(redirect string) (string, error) {
 	return code, nil
 }
 
-// ExchangeCode swaps an auth code + verifier for a token pair.
-func (c *Client) ExchangeCode(ctx context.Context, code, verifier string) (Tokens, error) {
+// exchangeCode swaps an auth code + verifier for a token pair.
+func (c *Client) exchangeCode(ctx context.Context, code, verifier string) (Tokens, error) {
 	body := map[string]string{
 		"grant_type":    "authorization_code",
 		"code":          code,

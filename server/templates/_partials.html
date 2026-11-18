@@ -683,12 +683,50 @@
     <div class="menu-caption mono">{{.Me}}</div>
     <div class="menu-caption money">{{money .Available}}</div>
     <div class="menu-divider"></div>
+    {{range .Accounts}}{{if ne . $.Me}}{{template "_switch" (switchTo $.Accounts . . "menu-item" 0 $.CSRFField)}}{{end}}{{end}}
+    <a href="?form=signin" class="menu-item" role="menuitem" data-modal="signin"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#log-in"/></svg>Sign in</a>
+    <div class="menu-divider"></div>
     {{range .Commands}}{{if .Nav}}<a href="{{.Href}}" class="menu-item" role="menuitem"{{if .Active}} aria-current="page"{{end}}>{{.Icon}}{{.Name}}{{if .Live}}<span class="badge badge-{{.Slug}}" aria-label="{{.Name}}"></span>{{end}}</a>{{end}}{{end}}
     <div class="menu-divider"></div>
     <form method="post" action="/logout">{{.CSRFField}}<button type="submit" class="menu-item" role="menuitem"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#log-out"/></svg>Sign out</button></form>
   </div>
 </div>
 {{end}}
+
+{{/* _signin — the Sign in dialog of a signed-in page (requirements §5),
+     drawn once by the layout, outside the sidebar: it signs the session in to
+     another account of this kernel through the one sign-in, POST /login. The
+     avatar menu opens it empty; an agent's card with the agent's handle
+     filled in (a trigger's data-fill). A refusal answers it open with the
+     reason and the handle typed. Input: signInView. */}}
+{{define "_signin"}}<dialog id="signin" class="modal-form"{{if .Open}} open{{end}} aria-label="Sign in" hx-swap-oob="true">
+  <div class="modal-head"><h2>Sign in</h2><a class="modal-close" href="{{.Path}}" data-modal-close aria-label="Close">×</a></div>
+  <div class="modal-body stack">
+    {{with .Error}}{{template "_error" .}}{{end}}
+    <form class="stack" method="post" action="/login" hx-post="/login" hx-swap="none">
+      {{.CSRFField}}
+      {{template "_signin_fields" .Handle}}
+      <button class="btn-primary" type="submit">Sign in</button>
+    </form>
+  </div>
+</dialog>{{end}}
+
+{{/* _signin_fields — the handle and password of a sign-in, the entry
+     screen's and the Sign in dialog's. Input: the handle typed. */}}
+{{define "_signin_fields"}}<div class="field">
+  <label for="handle">Handle</label>
+  <input id="handle" name="handle" type="text" placeholder="you" autocomplete="username" value="{{.}}" data-modal-fill required>
+</div>
+<div class="field">
+  <label for="password">Password</label>
+  <input id="password" name="password" type="password" autocomplete="current-password" required>
+</div>{{end}}
+
+{{/* _switch — the one control that switches account (requirements §5): a
+     button putting an account the session holds in use, a row of the avatar
+     menu or a button on a page (an agent's), with a count of what waits on
+     that account. Input: switchView, Held. */}}
+{{define "_switch"}}<form method="post" action="/switch">{{.CSRFField}}<input type="hidden" name="address" value="{{.Address}}"><button type="submit" class="{{.Class}}"{{if eq .Class "menu-item"}} role="menuitem"{{end}}>{{if eq .Class "menu-item"}}<span class="avatar" aria-hidden="true">{{initial .Address}}</span><span class="mono">{{.Label}}</span>{{else}}{{.Label}}{{end}}{{with .Count}}<span class="badge" aria-label="Waiting">{{.}}</span>{{end}}</button></form>{{end}}
 
 {{/* _update_notice — the superuser's notice that a newer Juice is out
      (requirements §6.1): a button to Admin at the foot of the sidebar, above
@@ -767,47 +805,26 @@
 </tr>
 {{end}}
 
-{{/* _kernel_strip — a peer row's facts in the stat strip's grammar (§5.5):
-     icon and value per slot, the meaning in the title, slots in one fixed
-     order so rows compare down the column, a muted "none" where a slot has
-     nothing. The roster yields the catalog and the contact cache, two dated
-     facts and never a verdict (§6.6). */}}
-{{define "_kernel_strip"}}
-<p class="stat-strip">
-  <span title="Public actions in its catalog"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#layers"/></svg> {{.Actions}}</span>
-  · {{if .Seen}}<span title="Catalog verified — last successful exchange"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#clock"/></svg> {{relTime .Seen}}</span>{{else}}<span class="muted" title="Catalog never verified"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#clock"/></svg> none</span>{{end}}
-  · {{if .Failed}}<span title="Last contact failed"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#x-mark"/></svg> {{relTime .Failed}}</span>{{else}}<span class="muted" title="No contact has failed"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#x-mark"/></svg> none</span>{{end}}
-</p>
-{{end}}
-
-{{/* _kernel_row — one kernel on the network list, in the action row's grammar
-     (§5.5): tile, title line with its marks, key, about, strip. A peer row
-     links to its own page, where it is named and suspended; this kernel's row
-     links nowhere, because it is this page. Its title is the peer's label
-     (ui-grammar "Naming"): the petname bound here, else its nickname marked ~,
-     else the shortened key; and this kernel's own handle. The key renders in
-     one spelling, with its copy: as the title when it is the label, else on
-     the ref line. A row no petname names carries the one verb that fills that
-     gap, Name — the same button as on the kernel's page (§5.1). */}}
+{{/* _kernel_row — one kernel in the network's record list (§5.5): its name,
+     the peer's label (ui-grammar "Naming"): the petname bound here, else its
+     nickname marked ~, else the shortened key, with its copy; this kernel's
+     own handle; its class and suspension as pills; the size of its catalog
+     and when an exchange with it last succeeded; and, on a row no petname
+     names, the one verb that fills that gap, Name — the same button as on the
+     kernel's page (§5.1). A peer's row opens its page, where its key, its
+     about and its contact failures are stated and it is suspended; this
+     kernel's row links nowhere, because it is this page. */}}
 {{define "_kernel_row"}}
-{{$current := eq .Class "current"}}
-<article class="action-row{{if not $current}} rowable{{end}}{{if .Suspended}} inactive{{end}}"{{if not $current}} tabindex="-1" data-href="/admin/peers/{{.PublicKey}}"{{end}}>
-  {{$n := name .Kernel}}
-  <span class="media tile">{{cardArt .PublicKey .Kernel.Label "kernel"}}</span>
-  <div class="action-body">
-    <div class="action-line">
-      {{if $current}}<span class="action-title">{{template "_name" (plain (brief .Kernel))}}</span>
-      {{- else}}<a class="action-title" href="/admin/peers/{{.PublicKey}}">{{template "_name" (plain (brief .Kernel))}}</a>{{end}}
-      {{- if and $n.Copy (not $n.Key)}} {{template "_copy" (copyOf "key" .PublicKey)}}{{end}}
-      {{- if $current}} <span class="pill">this kernel</span>{{else if eq .Class "party"}} <span class="pill">party</span>{{end}}
-      {{- if .Suspended}} <span class="pill status-danger">suspended</span>{{end}}
-      {{- if and (not $current) $n.Copy}} <a class="btn" href="/admin/peers/{{.PublicKey}}?form=admin-rename">Name</a>{{end}}
-    </div>
-    {{if or (not $n.Copy) $n.Key}}<p class="action-ref fingerprint">{{template "_name" (brief (kernelParty "" "" .PublicKey))}}</p>{{end}}
-    {{if .About}}<p class="action-desc">{{.About}}</p>{{end}}
-    {{if .Strip}}{{template "_kernel_strip" .Strip}}{{end}}
-  </div>
-</article>
+{{$current := eq .Class "current"}}{{$n := name .Kernel}}
+<tr{{if not $current}} class="rowable" tabindex="-1" data-href="/admin/peers/{{.PublicKey}}"{{end}}>
+  <td>{{if $current}}{{template "_name" (plain (brief .Kernel))}}{{else}}<a href="/admin/peers/{{.PublicKey}}">{{template "_name" (plain (brief .Kernel))}}</a>{{end}}
+    {{- if $n.Copy}} {{template "_copy" (copyOf "key" .PublicKey)}}{{end}}
+    {{- if $current}} <span class="pill">this kernel</span>{{else if eq .Class "party"}} <span class="pill">party</span>{{end}}
+    {{- if .Suspended}} <span class="pill status-danger">suspended</span>{{end}}</td>
+  <td class="num" data-label="Actions">{{if not $current}}{{.Actions}}{{end}}</td>
+  <td data-label="Seen">{{if not $current}}{{with .LastSeen}}{{relTime .}}{{else}}never{{end}}{{end}}</td>
+  <td class="row-actions">{{if and (not $current) $n.Copy}}<a class="btn" href="/admin/peers/{{.PublicKey}}?form=admin-rename">Name</a>{{end}}</td>
+</tr>
 {{end}}
 
 {{/* _inspect_status — a peer's live reachability card, extracted so the inspect

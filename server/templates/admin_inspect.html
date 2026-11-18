@@ -2,7 +2,7 @@
 {{$d := .Data}}
 {{$i := $d.Inspection}}
 <nav class="crumb"><a href="/admin/peers">← peers</a></nav>
-{{/* The header is the row's anatomy (§5.11): name with its marks, key, about.
+{{/* The header: the kernel's name with its marks, its key, its about.
      The polled card below states the facts with labels and holds the verbs. */}}
 {{$k := kernelParty $i.Petname $i.Nickname $d.Key}}
 <div class="page-head">

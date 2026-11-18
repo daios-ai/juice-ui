@@ -1,13 +1,20 @@
 // Progressive enhancement. The theme and sidebar toggles are real <form> POSTs
 // that work fully without JavaScript (server-read cookies, R8.6); this only adds
-// two niceties — forwarding the CSRF token on htmx requests, and applying the
-// new theme/sidebar state instantly to avoid a reload flash.
+// niceties — forwarding the CSRF token and the page's account on htmx
+// requests, and applying the new theme/sidebar state instantly to avoid a
+// reload flash.
+
+// account is the account this page was rendered for. Every script request
+// names it (X-Juice-Account), so the server refuses a page of another account
+// than the one in use, before anything runs (requirements §5).
+const account = document.querySelector('meta[name="account"]')?.content ?? "";
 
 document.addEventListener("htmx:configRequest", (e) => {
   const meta = document.querySelector('meta[name="csrf-token"]');
   if (meta && meta.content) {
     e.detail.headers["X-CSRF-Token"] = meta.content;
   }
+  if (account) e.detail.headers["X-Juice-Account"] = account;
   // Tell the server whether this tab is in the foreground. A backgrounded tab
   // keeps polling (fresh content/badges) but the chat message poll must not mark
   // rooms read while unattended. CSP forbids htmx's eval-based hx-trigger filters,
@@ -367,7 +374,7 @@ document.addEventListener('click', async (e) => {
     const csrf = document.querySelector('meta[name="csrf-token"]')?.content ?? '';
     try {
       const res = await fetch(json ? block.dataset.toJson : block.dataset.toForm, {
-        method: 'POST', body, credentials: 'same-origin', headers: { 'X-CSRF-Token': csrf },
+        method: 'POST', body, credentials: 'same-origin', headers: { 'X-CSRF-Token': csrf, 'X-Juice-Account': account },
       });
       const text = await res.text();
       if (!res.ok) return say(text.trim());
@@ -430,6 +437,9 @@ document.addEventListener('click', (e) => {
 // opens the native <dialog> as a modal (focus trap, Esc, top-layer stacking) and
 // strips the ?form= param from the URL so a reload doesn't reopen it. Without JS
 // the anchor navigates and the server renders the dialog already [open].
+// A dialog's [data-modal-fill] input takes its trigger's data-fill, empty when
+// the trigger has none (the Sign in dialog: an agent's card fills the handle,
+// the avatar menu leaves it blank); filled, the password is what is typed.
 export function openDialog(dlg) {
   if (!dlg || dlg.open) return;
   if (typeof dlg.showModal === 'function') dlg.showModal();
@@ -443,6 +453,9 @@ document.addEventListener('click', (e) => {
       e.preventDefault();
       closeAllMenus(); // a trigger may live inside a dropdown (e.g. New action ▾)
       openDialog(dlg);
+      const fill = dlg.querySelector('[data-modal-fill]');
+      if (fill) fill.value = trigger.dataset.fill || '';
+      if (fill && fill.value) dlg.querySelector('input[type=password]')?.focus();
       if (window.history && /[?&](form|menu)=/.test(location.search)) {
         history.replaceState(null, '', location.pathname);
       }
@@ -572,8 +585,10 @@ try { launcher = JSON.parse(document.getElementById("launcher-data")?.textConten
 // The catalog file: the actions, and the search's terms — its price as the
 // row names it and the quote that pins it — or null where none can be quoted.
 let catalog = null;
-const loadCatalog = () => (catalog ??= fetch("/search/catalog.json", { credentials: "same-origin" })
-  .then((r) => (r.ok ? r.json() : null))
+// A 412 refuses a page of another account than the one in use: reload, which
+// renders as the account in use, rather than read it.
+const loadCatalog = () => (catalog ??= fetch("/search/catalog.json", { credentials: "same-origin", headers: { "X-Juice-Account": account } })
+  .then((r) => (r.status === 412 ? (location.reload(), null) : r.ok ? r.json() : null))
   .then((file) => ({ actions: (file?.actions || []).map((e) => ({ ...e, r: hintKey(e.ref || "") })), search: file?.search || null }))
   .catch(() => ({ actions: [], search: null })));
 
@@ -864,7 +879,7 @@ document.addEventListener('click', async (e) => {
   const release = hold(form, bar);
   bar.classList.add('htmx-request'); // in flight (app.css .progress)
   try {
-    const res = await fetch(btn.dataset.fill, { method: 'POST', body, credentials: 'same-origin', headers: { 'X-CSRF-Token': csrf } });
+    const res = await fetch(btn.dataset.fill, { method: 'POST', body, credentials: 'same-origin', headers: { 'X-CSRF-Token': csrf, 'X-Juice-Account': account } });
     const text = await res.text();
     if (!res.ok) { say(text.trim()); return; }
     if (fields && !(res.headers.get('Content-Type') || '').startsWith('application/json')) {

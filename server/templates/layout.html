@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="csrf-token" content="{{.CSRFToken}}">
+  {{with .Me}}<meta name="account" content="{{.}}">{{end}}
   <title>{{if .Title}}{{.Title}} · {{end}}Juice</title>
   <link rel="icon" href="/static/juice-logo.svg" type="image/svg+xml">
   <link rel="icon" href="/static/favicon.ico" sizes="any">
@@ -80,6 +81,7 @@
   <div hidden aria-hidden="true" hx-get="/tick" hx-trigger="load, every 5s" hx-include="input[name=apart]" hx-swap="none"></div>
   {{range .Commands}}{{if .Live}}<input type="hidden" id="watch-{{.Slug}}" name="slow" value="{{.Slug}}:badge:">{{end}}{{end}}
   {{template "_idle" (idle .CSRFField)}}
+  {{template "_signin" .SignIn}}
   {{end}}
   <dialog id="modal-backdrop" class="modal-confirm" aria-labelledby="modal-msg">
     <div class="modal-box">

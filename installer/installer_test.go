@@ -21,28 +21,29 @@ import (
 
 // fakeKernel is the installation as a test arranges it.
 type fakeKernel struct {
-	mu        sync.Mutex
-	remote    bool
-	answers   bool
-	booted    bool
-	bootErr   error
-	due       []Component
-	failFirst int // installs refused before they succeed
-	installed []string
-	canCreate error
-	createErr error
-	makes     bool          // a failing Create still leaves a kernel
-	hold      chan struct{} // Create waits on it, when set
-	created   []string      // world handle password key, per Create
-	models    []any         // the models given to Create, per Create
-	initial   any           // the setup the models page opens on
-	dueAsked  []bool
-	started   int
-	holdStart chan struct{} // Start waits on it, when set
-	startErr  error         // Start fails with it, when set
-	ran       []string      // the programs started (Options.Run): what was installed by then, per call
-	startedAt []int         // how many times the programs had been started, per Start
-	worlds    []World       // the worlds listed, when set
+	assistants []string // the assistant passwords the installer handed over
+	mu         sync.Mutex
+	remote     bool
+	answers    bool
+	booted     bool
+	bootErr    error
+	due        []Component
+	failFirst  int // installs refused before they succeed
+	installed  []string
+	canCreate  error
+	createErr  error
+	makes      bool          // a failing Create still leaves a kernel
+	hold       chan struct{} // Create waits on it, when set
+	created    []string      // world handle password key, per Create
+	models     []any         // the models given to Create, per Create
+	initial    any           // the setup the models page opens on
+	dueAsked   []bool
+	started    int
+	holdStart  chan struct{} // Start waits on it, when set
+	startErr   error         // Start fails with it, when set
+	ran        []string      // the programs started (Options.Run): what was installed by then, per call
+	startedAt  []int         // how many times the programs had been started, per Start
+	worlds     []World       // the worlds listed, when set
 }
 
 func (k *fakeKernel) Local() bool { return !k.remote }
@@ -191,7 +192,8 @@ func startWith(t *testing.T, k *fakeKernel, broken bool) (*Installer, http.Handl
 		k.ran = append(k.ran, strings.Join(k.installed, ","))
 	}
 	in := New(Options{Kernel: k, Chrome: chrome{r: r, phrase: phrase, broken: broken}, URL: "http://127.0.0.1:4040",
-		Listen: "127.0.0.1:8080", Home: "/home/x/.juice", Log: slog.New(slog.NewTextHandler(io.Discard, nil)), Run: run})
+		Listen: "127.0.0.1:8080", Home: "/home/x/.juice", Log: slog.New(slog.NewTextHandler(io.Discard, nil)), Run: run,
+		Assistant: func(pw string) { k.mu.Lock(); k.assistants = append(k.assistants, pw); k.mu.Unlock() }})
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	in.Run(ctx)
@@ -276,9 +278,9 @@ func TestTheMachineChoosesTheSteps(t *testing.T) {
 	}{
 		{&fakeKernel{booted: true}, "start"},
 		{&fakeKernel{booted: true, due: agent}, "download,start"},
-		{&fakeKernel{}, "world,kernel,models,phrase,summary,install,start"},
-		{&fakeKernel{due: both}, "download,world,kernel,models,phrase,summary,install,start"},
-		{&fakeKernel{canCreate: errors.New("older")}, "download,world,kernel,models,phrase,summary,install,start"},
+		{&fakeKernel{}, "world,kernel,assistant,models,phrase,summary,install,start"},
+		{&fakeKernel{due: both}, "download,world,kernel,assistant,models,phrase,summary,install,start"},
+		{&fakeKernel{canCreate: errors.New("older")}, "download,world,kernel,assistant,models,phrase,summary,install,start"},
 		{&fakeKernel{bootErr: errors.New("damaged")}, "start"},
 		{&fakeKernel{remote: true}, "wait"},
 		{&fakeKernel{answers: true}, "wait"},
@@ -367,7 +369,7 @@ func TestANewMachineInstallsThenOpensTheUI(t *testing.T) {
 	}
 	b := page(t, h)
 	for _, want := range []string{`aria-current="step"><span class="install-mark" aria-hidden="true">2</span><span>World</span>`,
-		"Step 2 of 7", `value="play" required checked>`, `<span class="mono">play · fUSD</span>`, `<span class="muted">no real money</span>`,
+		"Step 2 of 8", `value="play" required checked>`, `<span class="mono">play · fUSD</span>`, `<span class="muted">no real money</span>`,
 		`<label class="choice" aria-disabled="true"><input type="radio" name="world" value="broken" required disabled>`, `<span class="muted">parse world file</span>`, "<span>Download</span>", "<span>Install</span>"} {
 		if !strings.Contains(b, want) {
 			t.Errorf("world page lacks %q", want)
@@ -384,6 +386,7 @@ func TestANewMachineInstallsThenOpensTheUI(t *testing.T) {
 		t.Error("the command precedes Back in the markup, so Enter submits it")
 	}
 	next(t, h, "kernel", url.Values{"handle": {"alpha"}, "password": {"secret123"}, "confirm_password": {"secret123"}})
+	next(t, h, "assistant", url.Values{"password": {"assist123"}, "confirm_password": {"assist123"}})
 	waitFor(t, in, "models")
 	next(t, h, "models", url.Values{"chat_provider": {"other"}, "chat_url": {"http://127.0.0.1:1/v1"}, "chat_key": {"sk-1"}, "chat_model": {"m1"}})
 	waitFor(t, in, "phrase")
@@ -394,7 +397,7 @@ func TestANewMachineInstallsThenOpensTheUI(t *testing.T) {
 	waitFor(t, in, "summary")
 	b = page(t, h)
 	for _, want := range []string{"polygon", "alpha", "/home/x/.juice/kernels/polygon", "Losing that directory loses the money", ">Install</button>",
-		"<dt>Chat model</dt><dd>m1 · http://127.0.0.1:1/v1</dd>", "<dt>Embedding model</dt><dd>None</dd>"} {
+		"<dt>Chat model</dt><dd>m1 · http://127.0.0.1:1/v1</dd>", "<dt>Embedding model</dt><dd>None</dd>", "<dt>Assistant</dt><dd class=\"mono\">assistant@alpha</dd>"} {
 		if !strings.Contains(b, want) {
 			t.Errorf("summary lacks %q", want)
 		}
@@ -436,8 +439,11 @@ func TestANewMachineInstallsThenOpensTheUI(t *testing.T) {
 	}
 	in.mu.Lock()
 	defer in.mu.Unlock()
-	if in.phrase != "" || in.password != "" || in.pub != "" || in.models != nil {
+	if in.phrase != "" || in.password != "" || in.assistant != "" || in.pub != "" || in.models != nil {
 		t.Error("the secrets leave memory with the sequence")
+	}
+	if strings.Join(k.assistants, ",") != "assist123" {
+		t.Errorf("the assistant's password is handed once: %v", k.assistants)
 	}
 }
 
@@ -532,6 +538,17 @@ func TestAPageRefusesItsAnswers(t *testing.T) {
 		t.Error("a refusal stays on its page")
 	}
 	next(t, h, "kernel", url.Values{"handle": {"alpha"}, "password": {"secret123"}, "confirm_password": {"secret123"}})
+	waitFor(t, in, "assistant")
+	if b := page(t, h); !strings.Contains(b, `<div class="box mono">assistant@alpha</div>`) {
+		t.Error("the assistant page names the account")
+	}
+	for form, want := range map[[2]string]string{{"short", "short"}: "at least 8 characters", {"assist123", "assist124"}: "don&#39;t match"} {
+		rec := next(t, h, "assistant", url.Values{"password": {form[0]}, "confirm_password": {form[1]}})
+		if b := rec.Body.String(); rec.Code != http.StatusUnprocessableEntity || !strings.Contains(b, want) || strings.Contains(b, "assist12") {
+			t.Errorf("assistant %v: %d, lacks %q or shows the password", form, rec.Code, want)
+		}
+	}
+	next(t, h, "assistant", url.Values{"password": {"assist123"}, "confirm_password": {"assist123"}})
 	waitFor(t, in, "models")
 	next(t, h, "models", nil)
 	waitFor(t, in, "phrase")
@@ -550,11 +567,17 @@ func TestBackGoesToThePageBefore(t *testing.T) {
 	next(t, h, "world", url.Values{"world": {"play"}})
 	waitFor(t, in, "kernel")
 	next(t, h, "kernel", url.Values{"handle": {"alpha"}, "password": {"secret123"}, "confirm_password": {"secret123"}})
+	next(t, h, "assistant", url.Values{"password": {"assist123"}, "confirm_password": {"assist123"}})
 	next(t, h, "models", nil)
 	waitFor(t, in, "phrase")
 	do(t, h, http.MethodPost, "/install/back", url.Values{"step": {"phrase"}}, nil)
 	waitFor(t, in, "models")
 	do(t, h, http.MethodPost, "/install/back", url.Values{"step": {"models"}}, nil)
+	waitFor(t, in, "assistant")
+	if in.assistant != "" {
+		t.Error("the assistant page shown again holds no password")
+	}
+	do(t, h, http.MethodPost, "/install/back", url.Values{"step": {"assistant"}}, nil)
 	waitFor(t, in, "kernel")
 	if in.password != "" || !strings.Contains(page(t, h), `value="alpha"`) {
 		t.Error("the kernel page shown again keeps the name and drops the password")
@@ -568,6 +591,7 @@ func TestBackGoesToThePageBefore(t *testing.T) {
 
 	next(t, h, "world", url.Values{"world": {"play"}})
 	next(t, h, "kernel", url.Values{"handle": {"alpha"}, "password": {"secret123"}, "confirm_password": {"secret123"}})
+	next(t, h, "assistant", url.Values{"password": {"assist123"}, "confirm_password": {"assist123"}})
 	next(t, h, "models", nil)
 	next(t, h, "phrase", url.Values{"understand": {"on"}})
 	next(t, h, "summary", nil)
@@ -590,6 +614,7 @@ func TestAFailedFirstBootReturnsToTheKernelPage(t *testing.T) {
 	waitFor(t, in, "world")
 	next(t, h, "world", url.Values{"world": {"play"}})
 	next(t, h, "kernel", url.Values{"handle": {"Bad"}, "password": {"secret123"}, "confirm_password": {"secret123"}})
+	next(t, h, "assistant", url.Values{"password": {"assist123"}, "confirm_password": {"assist123"}})
 	next(t, h, "models", nil)
 	next(t, h, "phrase", url.Values{"understand": {"on"}})
 	next(t, h, "summary", nil)
@@ -601,6 +626,7 @@ func TestAFailedFirstBootReturnsToTheKernelPage(t *testing.T) {
 	k.createErr = nil
 	k.mu.Unlock()
 	next(t, h, "kernel", url.Values{"handle": {"alpha"}, "password": {"another12"}, "confirm_password": {"another12"}})
+	next(t, h, "assistant", url.Values{"password": {"assist123"}, "confirm_password": {"assist123"}})
 	next(t, h, "models", nil)
 	waitFor(t, in, "phrase")
 	if !strings.Contains(page(t, h), "<li>abandon</li>") {
@@ -618,6 +644,7 @@ func TestAFailedFirstBootReturnsToTheKernelPage(t *testing.T) {
 	waitFor(t, in, "world")
 	next(t, h, "world", url.Values{"world": {"play"}})
 	next(t, h, "kernel", url.Values{"handle": {"alpha"}, "password": {"secret123"}, "confirm_password": {"secret123"}})
+	next(t, h, "assistant", url.Values{"password": {"assist123"}, "confirm_password": {"assist123"}})
 	next(t, h, "models", nil)
 	next(t, h, "phrase", url.Values{"understand": {"on"}})
 	next(t, h, "summary", nil)
@@ -632,10 +659,11 @@ func TestTheModelsStep(t *testing.T) {
 	in, h := start(t, k)
 	next(t, h, "world", url.Values{"world": {"play"}})
 	next(t, h, "kernel", url.Values{"handle": {"alpha"}, "password": {"secret123"}, "confirm_password": {"secret123"}})
+	next(t, h, "assistant", url.Values{"password": {"assist123"}, "confirm_password": {"assist123"}})
 	waitFor(t, in, "models")
 	b := page(t, h)
 	for _, want := range []string{`name="chat_provider" data-reveal="provider"`, `<option value="other" selected>`, `value="first"`,
-		`>List models</button>`, `<h3 class="flush">Chat model</h3>`, `<h3 class="flush">Embedding model</h3>`, `hx-post="/install/models/model"`, "Step 3 of 6"} {
+		`>List models</button>`, `<h3 class="flush">Chat model</h3>`, `<h3 class="flush">Embedding model</h3>`, `hx-post="/install/models/model"`, "Step 4 of 7"} {
 		if !strings.Contains(b, want) {
 			t.Errorf("the models page lacks %q", want)
 		}
@@ -746,6 +774,7 @@ func TestOnlyThisMachineInstalls(t *testing.T) {
 	}
 	next(t, h, "world", url.Values{"world": {"play"}})
 	next(t, h, "kernel", url.Values{"handle": {"alpha"}, "password": {"secret123"}, "confirm_password": {"secret123"}})
+	next(t, h, "assistant", url.Values{"password": {"assist123"}, "confirm_password": {"assist123"}})
 	next(t, h, "models", nil)
 	waitFor(t, in, "phrase")
 	if b := do(t, h, http.MethodGet, "/", nil, far).Body.String(); strings.Contains(b, "abandon") {

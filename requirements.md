@@ -1,7 +1,25 @@
 # Juice Web UI Requirements
 
-Version: 0.75.1
+Version: 0.76.0
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.76.0.** A session holds every account its person signs
+> in to, one of them in use, as Gmail and `juice auth use` do (§5): the
+> **Sign in** dialog, drawn over the page, adds one, and the avatar menu
+> switches among them. An agent is managed this way, as the user it is: its
+> row opens that dialog with its handle filled in, and the same Inbox, Wallet, Settings and Transactions
+> show its account, so what its program cannot do (approve a requester, accept
+> an invitation from another kernel, connect an account, send money back) the
+> operator does as it, with nothing drawn twice. An agent's account has no
+> rooms in the UI: they are its program's (§6.7). A page names the account it
+> was opened for, and one of another account than the one in use does nothing
+> and reloads itself. The operator chooses and types every agent's password:
+> the installer asks for the assistant's (§1), and Start asks every time. The
+> agents list is the fleet's control pane. Users, agents and kernels, records
+> of one kind each, are drawn by one component, the record list: a table on a
+> wide screen, each row stacked on a phone, showing a record's name and state,
+> a few figures and its most used commands, the rest on its page (§6.1,
+> §6.6).
 
 > **What changed in 0.75.1.** A text message in a room reads as formatted
 > text: Markdown, as Slack, Discord and ChatGPT render it, with no box and no
@@ -1293,8 +1311,8 @@ is read once, at start:
 |---|---|
 | Nothing | none: the installer does not appear |
 | A component only | Download |
-| A kernel only | World → Kernel → Models → Recovery phrase → Summary → Install |
-| Both | Download → World → Kernel → Models → Recovery phrase → Summary → Install |
+| A kernel only | World → Kernel → Assistant → Models → Recovery phrase → Summary → Install |
+| Both | Download → World → Kernel → Assistant → Models → Recovery phrase → Summary → Install |
 
 A kernel is missing when the configured kernel is this machine's (a loopback
 URL), no kernel home `$JUICE_HOME/kernels/<world>/` for the URL's port holds one
@@ -1350,6 +1368,14 @@ words, polled until it answers. Nothing on that card names an installation.
   other world follows under Experimental, in the kernel's order. **Kernel** takes the
   kernel's name and the superuser's password, twice, with `sys` read-only above
   it. The world and the kernel name each state their one consequence.
+* **Assistant** takes the password of `assistant@<kernel name>`, the agent each
+  person meets in their first room (§6.7), twice: the operator chooses it, as
+  every agent's (§6.1), and nothing makes one up. It is held in memory like the
+  superuser's, never rendered, typed again whenever the page is shown again, and
+  handed once, as a sequence that made a kernel ends, to the agents app, which
+  makes the assistant with it and forgets it. An installation whose kernel the
+  installer did not create gets no assistant by itself; the operator makes one
+  with New agent.
 * **Models** chooses the kernel's language models with the models form (§6.6):
   the chat model, behind the kernel's chat, JSON and decide, and the embedding
   model. It opens on None, so no provider is asked until one is chosen. None
@@ -1364,7 +1390,7 @@ words, polled until it answers. Nothing on that card names an installation.
   across a failed boot, shown on its page alone, acknowledged with its "I
   understand" box, held in memory and stored nowhere, and dropped when the
   sequence ends.
-* **Summary** names the world, the kernel name, the superuser, the chat and
+* **Summary** names the world, the kernel name, the superuser, the assistant, the chat and
   embedding models and the kernel's home, and is the point of no return: nothing before it writes anything. On a
   world whose rail is a chain (`evm`) it states, behind the alert icon, that the
   vault's keys live in that home and that losing it loses the money. Its button
@@ -1593,11 +1619,20 @@ them. A test holds this.
   * **CSRF:** `gorilla/csrf` — security-sensitive primitives are not hand-rolled.
   * **PKCE / crypto:** stdlib `crypto/rand`, `crypto/sha256`, `encoding/base64`.
   * **Logging:** stdlib `log/slog` (structured).
+  * **Markdown:** `yuin/goldmark`, for a room's text alone (§6.7, §8.1); a
+    CommonMark parser is not hand-rolled.
   * **Tests:** stdlib `testing` and `net/http/httptest`; the kernel is faked as
-    an `httptest.Server` (no network, no live kernel).
+    an `httptest.Server` (no network, no live kernel). Two suites run the
+    installed kernel instead (§9): the kernel contract test, and the user
+    stories (`make e2e`, build tag `e2e`), which drive headless Chrome through
+    `chromedp`.
 
-  The dependency footprint is small (htmx on the front end; `scs` and
-  `gorilla/csrf` on the back end); everything else is the standard library.
+  The dependency footprint is small. Front end: htmx. Back end: `scs`,
+  `gorilla/csrf`, `goldmark`, `go-bip39` (the recovery phrase),
+  `modernc.org/sqlite` (the chat service's store), and of `golang.org/x`,
+  `mod` (release versions), `sync` (the single-flight refresh) and `text`
+  (folding a search's accents). Tests alone: `chromedp`. Everything else is
+  the standard library.
 
 ## 3. Scope
 
@@ -1644,8 +1679,9 @@ them. A test holds this.
 
 ### 3.3 Known limitations
 
-* Because deposits are admin-only, a UI user cannot top up their own balance.
-  Balance views MUST state where money comes in on THIS world: an operator
+* On a world without payment addresses deposits are admin-only, so a UI user
+  cannot top up their own balance there; on a world with them a person
+  deposits from their own crypto wallet (§6.5). Balance views MUST state where money comes in on THIS world: an operator
   records it where the world has no payment addresses, and where it has them the
   wallet names the kernel's address and offers the user their own (§6.5). A peer
   account holds no money on any path (kernel §D14), so no peer surface shows a
@@ -1705,10 +1741,14 @@ network and holds each one's kernel tokens in its own server-side session — an
 the two are not the same client.
 
 So the UI reads the `kernels` half of the client records and **never reads a
-credential**. It writes one only for an agent's login, at the operator's act
-(New agent, or Start when the login has no session, §6.1), from a password typed in that act and kept
-nowhere, and the kernel record it writes when that kernel is absent or has
-moved is the one `juice kernel add` would. A browser visitor's session never
+person's credential**: it reads an installation's agent's, to seat it in a room
+(§6.7) and to count the decisions waiting on it (§6.1). It writes one only for
+an agent's login, at the operator's act (New agent, the installer's assistant,
+or Start, §6.1), from a password typed in that act and kept nowhere. The kernel
+record it writes when that kernel is absent or has moved is the one `juice
+kernel add` would. Switching to an agent (below) is a sign-in of the browser
+session like any other, from the password typed then, and shares no session
+with the agent's program. A browser visitor's session never
 reaches the store. Two consequences make this a rule rather than a
 preference. An installation is one operating-system user's state (§1 of that
 document), so tokens placed there are the operator's; a service that wrote its
@@ -1754,8 +1794,39 @@ kernel and world is in use, and keys everything durable by
   kernel, which completes a state once.
 * When refresh fails, or the user is suspended, the session is cleared and the
   user returns to login with a clear explanation.
-* Logout calls `POST /v1/auth/logout` to revoke the refresh token and drops the
+* Logout calls `POST /v1/auth/logout` to revoke the refresh token of every account the session holds and drops the
   session.
+* **A session holds accounts.** A person may sign in to several accounts of
+  this kernel in one browser session, one of them **in use**, as Gmail's account
+  switcher and the kernel's own `juice auth use` do (ecosystem-standard §7: an
+  interface "shows which one is in use"). The entry screen is for a
+  signed-out visitor alone, who is sent to the landing from it. A signed-in
+  session signs in to another account through the **Sign in** dialog, drawn
+  once by the layout over whatever page is open: the avatar menu opens it
+  empty, an agent's row with the agent's handle filled in (§6.1), so only its
+  password is typed. Both the entry screen and the dialog post to the one
+  sign-in, `POST /login`, with the same fields; a sign-in adds the account and
+  puts it in use, and a refusal answers the dialog open with the reason and
+  the handle typed (without script, a flash on the page, the dialog open).
+  `POST /switch` puts another account the
+  session holds in use. Both renew the session token, a change of privilege
+  (OWASP), so a request that began before reads nothing after. Every request
+  acts as the account in use: its token, its caches, its address, and what the
+  pages offer it (the superuser's destinations only to `sys`). The accounts and
+  the account in use live in the store beside the session, so a stale save of
+  the record cannot switch back. An account of another kernel is refused. A
+  sign-in again to an account held replaces its pair, the old one revoked.
+* **A page acts as the account it was opened for.** Every page names that
+  account: in its `account` meta, which every script request sends as
+  `X-Juice-Account`, and beside the CSRF token in every form (`juice_account`).
+  The one gate every signed-in request and every heartbeat lane passes refuses
+  a request naming another account than the one in use before any handler or
+  watcher runs: htmx's (a heartbeat, a fragment) sends its page to the landing,
+  which renders as the account in use; a native script request is refused 412
+  with no redirect, since `fetch` would carry its header through a redirect and
+  loop, and the catalog's caller reloads the page; and a form says "Nothing was
+  done: that page was open as …". A request naming no account, a navigation, acts as the
+  account in use.
 * **Session limits, the UI's own policy.** A session ends **30 minutes** after
   the last request the person made and **12 hours** after login, whatever
   happened. Both sit within NIST SP 800-63B-4 §4.2.3 (1 hour, 24 hours) and are
@@ -1811,9 +1882,12 @@ and absent until then.
   the brand (the kernel and its world, §7) with the collapse toggle; the
   conversations rail (§6.7), headed by the opener of a new room; and at
   its foot the signed-in user's avatar, which
-  carries the task badge and opens the **avatar menu**: the address and the
-  available balance, then every destination of the registry with the inbox's
-  count on its row, then Sign out. No destination occupies the sidebar itself.
+  carries the task badge and opens the **avatar menu**: the address in use and the
+  available balance, then the session's other accounts, each switching to it
+  (§5), and **Sign in**, opening the Sign in dialog, then every destination of the
+  registry with the inbox's count on its row, then Sign out, which ends every
+  account. One control puts an account the session holds in use wherever
+  it stands (`_switch`). No destination occupies the sidebar itself.
   The current destination MUST carry `aria-current` in the menu. One registry,
   built once per request server-side, MUST drive the menu and the launcher, so
   they cannot drift; its entries are plain words, every one a link.
@@ -1825,7 +1899,7 @@ and absent until then.
   `<html>`) and applies to wide screens alone. There is no topbar and no
   overlay on a wide screen.
 * **Sign-in lands in a conversation** (§6.7): the conversations app's landing,
-  or Discover where no conversations app is mounted. The root address (`/`)
+  or Discover where no conversations app serves the account in use. The root address (`/`)
   renders no page: it MUST redirect a session to that landing. A session that
   cannot pay to open its conversations lands on the **wallet** instead, the
   reason as the one-shot banner, as wallet apps open an empty account on
@@ -1862,60 +1936,115 @@ and absent until then.
   destination to anyone else. That authority is the operator's machine, which no
   kernel account confers: on a shared root, an ordinary session could otherwise
   edit and stop another person's agent, and anyone signed in could start a
-  process on the host. The agents app is one: it keeps an agent's home at
-  `$JUICE_HOME/agents/<login>/` (ecosystem-standard §2), edits its `agent.md`,
-  and its `config.json` through the form of the daemon's own schema of it,
-  `$JUICE_HOME/schemas/juice-agent.schema.json`, as the kernel's configuration
-  is edited (§6.6), `$schema` kept as saved and the JSON editor alone until the
-  schema exists: a save replaces the file whole, by rename, which the daemon
-  reads at its next start, and a running agent's flash says so; a save from a
-  page older than the file is refused, since the daemon's start writes the
-  keys a file lacks (juice-agent 0.7.0 §11). Each agent is the program
-  `agent-<login>` of the process supervisor (§1), running `juice-agent serve
-  <login>`. The assistant is declared when it has a session and no program; any
-  other home with no program is declared once at start, running when it has a
-  session and otherwise stopped. An agent is running when a daemon holds
-  `serve.lock` in its home (juice-agent 0.6.0 §11, as a kernel holds its own,
-  ecosystem-standard §4), whoever started it, or when the supervisor's child has
-  not yet taken the lock; a lock whose state cannot be read is an error, never
-  "stopped". Stop has the supervisor stop whoever serves it, and keeps it stopped
-  across restarts; Start undoes that and retries at once. The daemon's session
-  is the login's own, made as `juice auth login <login>` would (§5): New agent
-  creates the account when the kernel has none and the session, from the
-  handle and a kernel password; Start is one click while the login has a
-  session and asks for the password when it has none — no credential file, or
-  a last run that ended with the daemon's `run juice auth login` advice —
-  which is how an agent made at the command line or one whose session died
-  is served from the page. Start and Delete are refused while the agent runs,
-  and no credential is written then, and neither carries a banner: the status
-  block, refreshed by the page's heartbeat and never while unchanged in state
-  or exit line, is the statement. Delete holds `serve.lock` through the
-  removal, so no daemon takes it meanwhile. A stopped agent shows the daemon's
-  `error:` line from its current run. The agent's page shows its account;
-  its history is the transactions page, since the kernel filters
-  transactions by process and not by party. An agent pays for its own calls,
-  its model's above all, so the operator **funds** it: Fund on its page takes
-  an amount, Review names it and the price of `sys/transfer` read of its row,
-  and the money button `Fund (N)` sends the amount from the operator's balance
-  to the agent, pinned to the quote reviewed and named by an `external_key`
-  minted at Review, so a double submit or a retry moves money once (the
-  withdrawal's pattern); terms that moved are reviewed again under a new key.
-  An outcome not known — no answer, a call the kernel sent and has not
-  settled, or a run under the same key not settled yet — returns to the
-  confirm with the same amount, quote and key, so Fund again moves money once;
-  only a refusal reopens the amount, whose next Review mints a new key.
-  The recipient is never typed: Fund is a surface powered by a native, as
-  search is by `sys/lookup`, not the send form §6.5 forbids. New agent lands
-  on its page with Fund open (Stripe and Twilio onboarding: create, then add
-  funds). The page shows the price of one call of the model the agent's config
-  names as `reason` and its `default_budget`, both read live, and a pill says
-  what stops it working: `no funds` below one model call, `budget too low`
-  when its budget per job is below one; the list shows the same pill. An
-  existing agent keeps the budget its `config.json` holds (juice-agent
-  0.11.1), raised in the configuration form on the same page. On its start it makes and runs
-  the assistant, `assistant@<kernel>`, that a session lands in conversation
-  with (§6.7, rule 11); the assistant is otherwise an ordinary agent. It knows
-  nothing of chat: chat joins the agents it finds.
+  process on the host. The agents app is one. **An agent is a user**
+  (ecosystem-standard §7) whose program can only list, complete and decline
+  tasks, run actions and rate; every other kernel verb it holds — approving a
+  requester (U52 withholds its tasks until then), accepting an invitation from
+  another kernel, connecting an account, ending a session, sending money back —
+  the operator exercises **as it**, by switching to its account (§5), through
+  the same pages every user has. Nothing of a user's pages is drawn again in
+  the app, and the app keeps only what no user page holds: the program, the
+  instructions, the configuration, and the way into the account.
+
+  * **Homes and files.** It keeps an agent's home at `$JUICE_HOME/agents/<login>/`
+    (ecosystem-standard §2), read by one reading of who is an agent here
+    (`apps.AgentLogins`), edits its `agent.md`, its **instructions**, and its
+    `config.json` through the form of the daemon's own schema of it,
+    `$JUICE_HOME/schemas/juice-agent.schema.json`, as the kernel's configuration
+    is edited (§6.6), `$schema` kept as saved and the JSON editor alone until the
+    schema exists: a save replaces the file whole, by rename, which the daemon
+    reads at its next start, and a running agent's flash says "Saved. Stop and
+    start <agent> to apply."; a save from a page older than the file is refused, since the
+    daemon's start writes the keys a file lacks (juice-agent 0.7.0 §11).
+  * **The program.** Each agent is the program `agent-<login>` of the process
+    supervisor (§1), running `juice-agent serve <login>`; any home with no
+    program is declared once at start, running when it has a session and
+    otherwise stopped. An agent is running when a daemon holds `serve.lock` in
+    its home (juice-agent 0.6.0 §11, as a kernel holds its own,
+    ecosystem-standard §4), whoever started it, or when the supervisor's child
+    has not yet taken the lock; a lock whose state cannot be read is an error,
+    never "stopped". Stop has the supervisor stop whoever serves it, and keeps it
+    stopped across restarts. A program that stops by itself, or with Juice, is
+    started again by the supervisor with the session it holds, as every program
+    is (§1); juice-agent needs no password to serve.
+  * **Passwords are the operator's.** The operator chooses and types every
+    agent's password; the app generates none and keeps none. **New agent** takes
+    a handle and the password twice, and makes the account when the kernel has
+    none (one it holds is adopted only when the password signs in), its session
+    as `juice auth login` would (§5), its home and its program, started; the
+    installer makes the assistant the same way with the password it asked for
+    (§1). **Start** asks for the password every time: it signs in, and only then
+    is the session recorded and the program started, so a wrong password changes
+    nothing. There is no Restart: a saved configuration applies at the next
+    start, and Stop then Start is that, password included. An agent made by an earlier
+    release whose password the app kept offers **Set password**, the new one
+    typed twice: the app signs in with the kept one, changes it, ends that
+    session and forgets the kept one; the program keeps serving, since a
+    password change ends no other session (measured on v0.21.3). It is a command of its own because an
+    agent account has no recovery phrase, so a mistyped password must not become
+    the account's unseen.
+  * **The fleet's control pane** is the list (`/agents`), where an operator
+    checks each agent and acts on it without opening its page, as Docker
+    Desktop, the EC2 instance list and Render keep a fleet; the app's own lists
+    of things one runs (Admin's users, open sessions, pending requesters) hold
+    their commands too, which the action row's rule (§6.4) does not. **An agent
+    is a row of a record list** (`_agent_row`, §6.6's component): its handle,
+    linking to its page, with one pill — `stopped`, else what stops it working
+    (`suspended`, `no funds` below one call of the model its config names as
+    `reason`, `budget too low` when its `default_budget` is below one), else
+    `running`; its balance; when it last acted (the start of its newest
+    transaction, read with its own session), `never` until it has; and its
+    commands in one order, so each keeps its place: **Start** or **Stop**, an
+    icon in one slot (play, and a red square), then **Fund**, then **Switch**
+    when the session holds the agent's account or else **Sign in**, either
+    carrying the count of decisions waiting. They are an agent's commands
+    there alone, with one set of dialogs per agent (`_agent_dialogs`). Agents
+    that need the operator come first — stopped on an error, running but
+    unable to work, or with decisions waiting — then by handle. A command
+    answers in the list: a refusal re-renders it with that agent's dialog open
+    and its reason, a success returns to it, and without script a command's
+    link (`/agents?form=…&handle=…`) opens the list with that dialog open. The
+    heartbeat keeps each row's pill and commands, answered only when its
+    program's state or exit line changed; the dialogs stand outside the row,
+    so one being typed in is never replaced; balances and the count refresh on
+    a reload. Switch puts the agent's account in use; Sign in opens the
+    layout's Sign in dialog with the agent's handle filled in (§5).
+  * **The agent's page** states its handle and its pill, then what its row
+    leaves out — its balance and what is parked, the model and the price of
+    one call of it, the budget per job, when it last acted, and a stopped
+    agent's `error:` line from its current run — then its **Settings**. It
+    holds none of the row's commands.
+  * **Fund** takes an amount, Review names it and the price of
+    `sys/transfer` read of its row, and the money button `Fund (N)` sends the
+    amount from the operator's balance to the agent, pinned to the quote
+    reviewed and named by an `external_key` minted at Review, so a double submit
+    or a retry moves money once (the withdrawal's pattern); terms that moved are
+    reviewed again under a new key. An outcome not known — no answer, a call the
+    kernel sent and has not settled, or a run under the same key not settled yet
+    — returns to the confirm with the same amount, quote and key, so Fund again
+    moves money once; only a refusal reopens the amount, whose next Review mints
+    a new key. The recipient is never typed: Fund is a surface powered by a
+    native, as search is by `sys/lookup`, not the send form §6.5 forbids. New
+    agent lands on its page with Fund open (Stripe and Twilio onboarding: create,
+    then add funds). **Settings** are rows as the Settings page's: the
+    instructions, their first line, and the configuration, each with Edit
+    opening its dialog; Set password where a password is kept; and, when
+    stopped, **Delete**, naming the balance left in the account, which stays
+    reachable by signing in to it, and asking so.
+    Delete holds `serve.lock` through the removal, so no daemon takes it
+    meanwhile.
+  * **Decisions waiting** are what waits on an agent that its program cannot
+    do, read with its own session: the requesters awaiting its approval and its
+    waiting tasks that take no input, an invitation above all. The page and the
+    list state the count; the Agents row of the avatar menu carries their total
+    as a live badge, for the operator alone; the operator takes them by
+    switching to the agent.
+  * An existing agent keeps the budget its `config.json` holds (juice-agent
+    0.11.1), raised in the configuration form.
+  * On its start the app makes the assistant, `assistant@<kernel>`, that a
+    session lands in conversation with (§6.7, rule 11), when the installer
+    handed it a password; the assistant is otherwise an ordinary agent. It knows
+    nothing of chat: chat joins the agents it finds.
 * The task badge MUST be the only attention-demanding affordance in the **core**
   UI. It MUST reflect waiting tasks whose `required_caller` is the signed-in
   user (a superuser lists everyone's) and the requesters awaiting a decision,
@@ -2730,6 +2859,17 @@ no page sends a public key to the user routes. This is why the two rename forms
 and the two suspend verbs are separate here — not for
 symmetry, but because the kernel refuses anything else.
 
+**Records of one kind are one record list.** Admin's users, the fleet's
+agents (§6.1) and the network's kernels are drawn by one component, the
+*resource list* of Shopify Polaris's IndexTable, AWS Cloudscape's collection
+and IBM Carbon's data table: a table on a wide screen, and on a narrow one each
+row stacked (Nielsen Norman Group, *Mobile Tables*), its name and state on
+top, each figure a labelled line, its commands last, never scrolled sideways.
+A row shows a record's name, a state only when it says something, a few
+figures and its most used commands; everything else is its page. A user's row
+is its address, `suspended` when it is, its available and parked money, and
+Rename and Suspend (or Unsuspend), since a user has no page here.
+
 **Peers.**
 
 * **The roster is the whole known network, as one list.** `/v1/admin/peers`
@@ -2737,37 +2877,31 @@ symmetry, but because the kernel refuses anything else.
   transaction here names the kernel) and **discovered peers** (a catalog:
   action count). The
   page lists **this kernel first, then its counterparties, then the known
-  network**, each class in the kernel's own order, as one paged list in the
-  action row's grammar (§6.2) — tile, title line, key, `about`, strip — and
-  **not polled**. A class is marked by a neutral pill on the title line:
+  network**, each class in the kernel's own order, as one paged record list
+  (above) — the kernel's name, the size of its catalog, when it was last seen
+  — and **not polled**. A class is marked by a neutral pill beside its name:
   `this kernel` on this kernel, `party` on a counterparty; a known kernel
   carries no mark. This kernel's title is its own handle, and its row links
   nowhere, because it is this page; a peer's row opens its page. The identity
   this kernel's row needs is read before the page renders: a failed read is an
   error, never a blank row.
-  **The key renders in one spelling.** The abbreviation exists for matching,
-  so a row never shows two of them: an unbound kernel's title is the
-  abbreviated key and the row has no ref line; a named kernel's ref line is
-  that same abbreviation. The whole key is yielded by the one **copy control**
-  beside either (§7), because every command that takes a kernel takes the
-  whole key.
-  **A peer row's facts are a strip**, in the action strip's grammar (§6.2):
-  icon and value per slot, the meaning in the tooltip, slots in one fixed
-  order so rows compare down the column — the catalog count (both classes),
-  then the kernel's **contact cache**: `last_seen` (when a verified exchange
-  last succeeded — catalog freshness) and `last_contact_failed_at` (when one
-  last failed). A slot with nothing to state renders a muted `none`, which is
-  the strip's positional convention and not the placeholder forbidden below.
-  The two timestamps are dated facts and never a status pill, because the
-  kernel states neither as a verdict: it holds two timestamps that only ever
+  **The key renders in one spelling.** The abbreviation exists for matching:
+  an unbound kernel's name is the abbreviated key, with the one **copy
+  control** (§7) yielding the whole key, because every command that takes a
+  kernel takes the whole key; a named kernel's row shows no key, which its
+  page states.
+  **A peer row's figures** are the catalog count (both classes) and
+  `last_seen` — when a verified exchange last succeeded, catalog freshness —
+  dated, `never` until one has. It is a dated fact and never a status pill,
+  because the kernel states it as no verdict: its contact timestamps only ever
   move forward, and it neither hides nor reorders a peer for having failed.
-  The UI therefore reports them and draws no conclusion about whether a peer
-  is up — the call-and-see rule below is unchanged. This kernel's row carries
-  no strip: the roster states nothing about it. Every absent prose field —
-  `about`, `petname` — is omitted, never rendered as an empty string or a
-  placeholder.
-  **A row carries a verb only where its gap is visible.** A row titled by its
-  key carries one verb, `Name` — the same button as on the kernel's page —
+  The UI therefore reports it and draws no conclusion about whether a peer is
+  up — the call-and-see rule below is unchanged; when one last failed, and the
+  kernel's `about`, are its page's. This kernel's row states neither: the
+  roster states nothing about it. A suspended kernel says so by its pill and
+  is never faded.
+  **A row carries a verb only where its gap is visible.** A row no petname
+  names carries one verb, `Name` — the same button as on the kernel's page —
   into its page with the rename form open; a named row and this kernel's row
   carry none, as a result row carries none.
 
@@ -2863,8 +2997,8 @@ symmetry, but because the kernel refuses anything else.
   `GET /v1/admin/peers/{key}`, for every known kernel). Transport protocol strings
   are not shown, and no absent fact renders as a row, a dash or `none`. The
   verbs stand in a `.cluster` inside the card's `.stack`, separated from the
-  facts by the stack's step and by nothing else. The header is the row's anatomy without the strip — name with its
-  marks, key, `about` — and the card holds the facts and the verbs as buttons,
+  facts by the stack's step and by nothing else. The header names the kernel
+  with its marks, its key and its `about`, and the card holds the facts and the verbs as buttons,
   Name and Suspend (or Unsuspend), as the user page does. The `party` pill on
   the page is the roster's class.
 * **Work addressed to this kernel reaches its operator's inbox.** A peer
@@ -3545,11 +3679,21 @@ The rules:
     invited, delivered to and shown alike wherever it lives. A local agent invited
     to a room elsewhere stays invited: this UI accepts for its agents at home
     only.
-11. **The assistant exists.** The agents app makes `assistant@<kernel>` when it
-    starts and has no home for it: the password it keeps in its app state, the
-    account (one the kernel already holds is adopted only when that password
-    signs in), the session, the home, and the daemon. It starts a stopped
-    assistant that holds a session.
+11. **The assistant exists** where the installer made the kernel: the agents
+    app makes `assistant@<kernel>` with the password the installer asked for
+    (§1), as New agent makes any agent (§6.1) — the account (one the kernel
+    already holds is adopted only when that password signs in), the session,
+    the home, and the daemon — and forgets the password.
+12. **An agent's account has no rooms in the UI.** Its conversations are its
+    program's: a page of its rooms would settle its deliveries (rule 7), bill
+    its reads and post in its name. So chat serves every account but this
+    installation's agents (`Serves`), and the core asks it once per request:
+    for an agent's account, switched to (§5), the session lands on Discover,
+    the sidebar has no rail, chat's routes send the browser to the landing and
+    its watchers answer nothing, and the inbox's Approve of a chat is the
+    kernel's approval alone, which is what accepting an invitation needs
+    (measured on v0.21.3: approve, then completing the invitation task joins
+    the agent to a room elsewhere, with no chat key and no payment).
 
 The post action's description is read by an agent on every turn, so it says
 what the rules need of one: a member of the room is reached by posting with its
@@ -3611,8 +3755,9 @@ answered yet, may hold rooms, so then no room is made.
   tick is: the dialog closes, the rail and the crumb are replaced in place, and
   no page loads. A rename refused comes back open with the reason and the name
   typed. Deleting or leaving the room in view goes to `/chat`. A delete or a leave
-  of a room already gone is done. The rail follows at each other member's next read. An entry renders as the view of its body (§7), a failure being the
-  view of its `{status, reason}`. **Waiting on** is one line naming the
+  of a room already gone is done. The rail follows at each other member's next read. An entry renders by its body, as this section's terms state: a text
+  as Markdown, any other body as the view (§7), a failure being the view of
+  its `{status, reason}`. **Waiting on** is one line naming the
   members other than the viewer that hold an unanswered delivery in the room
   — a fact chat holds, never a claim of activity, which chat cannot observe —
   kept by the heartbeat, empty when nobody; three dots pulse beside it while
@@ -3635,7 +3780,7 @@ answered yet, may hold rooms, so then no room is made.
   with the room taken from the page's address, so the browser and an agent
   take one path. A refusal, the kernel's or chat's, stands just above the bar,
   keeps what was typed, and clears at the next keystroke. A post is a string
-  for now; a document post is a later decision.
+  (rule 1).
 * **The panel** holds an action or a search's results, its head held at the
   top as the panel scrolls. An action (`GET /actions/panel?ref=`, by its
   address as its page is, whichever kernel holds it: a row's panel is its
@@ -3825,8 +3970,10 @@ imports its live rooms, members and messages once and never writes that file.
   `1rem`, which one line of the stylesheet defines, since iOS Safari zooms the page
   on a text field under 16px. Every button, input, select, one-line textarea and icon button is the
   control height, so controls side by side align.
-* **Icons.** One set (Heroicons, outline/solid for inactive/active), recolorable
-  to tokens, never emoji. Every icon-only control MUST carry an `aria-label`;
+* **Icons.** The interface's own icons are one set (Lucide, outline, one
+  sprite, `static/icons.svg`), recolorable to tokens, never emoji. The glyph
+  inside an action's generated media (§6.2) is decoration, not one of them: it
+  is picked from Material Symbols by package `icons`. Every icon-only control MUST carry an `aria-label`;
   hover tooltips are enhancement only.
 * **The copy control.** A truncated key, hash or address serves matching by
   eye; the commands that take one — `admin peer inspect <key>`,
@@ -3861,7 +4008,8 @@ imports its live rooms, members and messages once and never writes that file.
 ## 8. Security
 
 **Architecture.** The UI MUST apply the session, token, PKCE, single-flight
-refresh, session-limit, logout-revocation, and cookie/CSRF rules of §5, and additionally MUST:
+refresh, session-limit, logout-revocation, cookie/CSRF and account rules of §5
+(a page acts as the account it was opened for), and additionally MUST:
 route all browser traffic through the BFF as the sole kernel client; serve a
 strict `Content-Security-Policy` (no inline script, self-hosted htmx, no
 third-party origins, images from this server alone, save that a room's page
@@ -3950,8 +4098,53 @@ Every production `.go` file has a `_test.go` file with independent tests.
   when clicked, from an https host of the test's own, a tool from the launcher and a tool from search
   results each opened and run in the panel with its result as the draft and the
   page still the room, a room made by address and joined by the invited person
-  from the sidebar, and a post's charge in Transactions. A commit needs it green
-  beside `make check`;
+  from the sidebar, a post's charge in Transactions, the operator making an
+  agent and stopping, starting (a wrong password then the right one), funding
+  and switching to it from the fleet's list, its row's pill and commands
+  following its program by the heartbeat, its page stating its facts and
+  Settings, a person messaging the agent and the
+  operator signing in to it from its row in the Sign in dialog, its handle
+  filled in and its password typed, a wrong one said there, deciding in its
+  Inbox with no rooms and no Agents shown, and switching back, the avatar
+  menu's Sign in opening the dialog empty, Admin's users and the network's
+  kernels drawn as record lists, the entry screen sending a signed-in
+  person to the landing, and a second tab open as the other
+  account reloading itself. The install types the assistant's password. A
+  commit needs it green beside `make check`;
+* a session's accounts (`session`, `server`): each account its own tokens,
+  caches and refresh; Use only to an account held; a request that began before
+  a switch reads nothing after it, while a refresh in flight across a switch
+  still stores the rotated pair on its account; a stale save cannot switch back; Logout
+  returns every pair and sign-out revokes each; another kernel's account
+  refused; a consent begun by one account refused to another; the entry screen
+  refused to a signed-in session, which carries the Sign in dialog, opened by
+  ?form=signin&handle= without script, a refusal answering it open with the
+  reason and the handle (a flash on the page without script), a sign-in in it
+  adding and switching; what a page offers follows the account in use;
+  a form, a heartbeat of every lane, a fragment and the catalog file of a page
+  of another account do nothing and reach no kernel, the wallet's deposit
+  request among them; every script request, GET or POST, names its account
+  (drift guard over the page script and the wallet module); conversations served to their accounts alone, the
+  landing, the rail, the routes and the watchers following; one sign-in
+  (`client.SignIn`) and one login record (`client.RecordLogin`), which writes
+  nothing for another account;
+* the agents app: no password generated or kept (drift guard); Start always
+  asks, a wrong password changing nothing, and leaves a running agent as it
+  is; New
+  agent refuses two different passwords; the assistant made only with the
+  installer's password, once; Set password changing a kept one and forgetting
+  it; decisions counted from the agent's own session, and the menu's badge; the
+  an agent drawn as a row of the record list, its pill, balance, last active
+  and commands in one order with the count on Switch or Sign in, one set of
+  dialogs each, and its page stating the facts the row leaves out and none of
+  its commands; a command answering in the list, a refusal with its dialog
+  open, a link without script opening that dialog; the
+  list putting what needs the operator first; what an agent's own session shows
+  (decisions, last active) read once; the settings rows, every edit a dialog,
+  Delete's question naming the balance; Sign in on an agent not held opening
+  the layout's dialog with its handle filled in; the installer's Assistant page in every sequence that
+  creates a kernel, its refusals, and its password handed once and never
+  rendered;
 * a room's text (`server/markdown.go`): each Markdown construct drawn as
   meant, a named link with its address, an image as its button; over a hostile
   corpus — scripts, raw HTML, `javascript:` and `data:` addresses, attribute
@@ -4111,6 +4304,12 @@ Every production `.go` file has a `_test.go` file with independent tests.
   one; the wallet lists the viewer's own sessions; the operator's locked figure reads
   `locked` without the escrow signal on every page that shows it; a blocked
   payout's reason renders (§6.5);
+* record lists (`table.records`): every body row of users, agents and kernels
+  has its name first, unlabelled, its commands last and a `data-label` on
+  every cell between, and the stylesheet stacks it on a narrow screen; a
+  user's row states no description and no `active` pill; a kernel's row its
+  class pills, catalog size and last seen, `Name` only when unnamed, this
+  kernel's linking nowhere, and no key beside a name;
 * the network page's halt banner is led by `#alert`, a banner in page flow owns
   its spacing, and the vault's finalized holdings render as served (§6.6);
 * what is known about an action comes from its detail read: the strip is

@@ -23,16 +23,14 @@
 </div>
 {{if $d.Users}}
 <div class="table-scroll">
-<table>
-  <thead><tr><th>Address</th><th>About</th><th class="money">Available</th><th class="money">Parked</th><th>State</th><th></th></tr></thead>
+<table class="records">
+  <thead><tr><th>User</th><th class="money">Available</th><th class="money">Parked</th><th></th></tr></thead>
   <tbody>
   {{range $d.Users}}
   <tr>
-    <td>{{template "_name" (name .Address)}}</td>
-    <td class="muted">{{.Description}}</td>
-    <td class="money">{{money .Available}}</td>
-    <td class="money">{{money .Locked}}</td>
-    <td>{{if .Suspended}}<span class="pill status-danger">suspended</span>{{else}}<span class="pill status-credited">active</span>{{end}}</td>
+    <td>{{template "_name" (name .Address)}}{{if .Suspended}} <span class="pill status-danger">suspended</span>{{end}}</td>
+    <td class="money" data-label="Available">{{money .Available}}</td>
+    <td class="money" data-label="Parked">{{money .Locked}}</td>
     <td class="row-actions"><div class="cluster">
       <a class="btn" href="/admin?form=admin-rename&address={{.Address}}">Rename</a>
       {{if .Suspended}}

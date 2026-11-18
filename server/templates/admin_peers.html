@@ -67,15 +67,18 @@
 {{end}}
 
 <h2>Kernels</h2>
-{{/* One list: this kernel, its counterparties, then the known network, each
-     class marked by a pill (§6.6). */}}
+{{/* One record list: this kernel, its counterparties, then the known
+     network, each class marked by a pill (§6.6). */}}
 <div class="row control-row">
   {{if $d.ShowSuspended}}<a class="btn" href="/admin/peers">Hide suspended</a>{{else}}<a class="btn" href="/admin/peers?all=1">Show suspended</a>{{end}}
   <a class="btn" href="/admin/peers?form=admin-inspect" data-modal="form-admin-inspect">+ inspect a kernel by key</a>
 </div>
 {{if $d.Kernels}}
-<div class="action-list">
-  {{range $d.Kernels}}{{template "_kernel_row" .}}{{end}}
+<div class="table-scroll">
+<table class="records">
+  <thead><tr><th>Kernel</th><th class="num">Actions</th><th>Seen</th><th></th></tr></thead>
+  <tbody>{{range $d.Kernels}}{{template "_kernel_row" .}}{{end}}</tbody>
+</table>
 </div>
 {{end}}
 {{template "_pager" $d.Pager}}

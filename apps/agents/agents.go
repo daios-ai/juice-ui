@@ -22,9 +22,10 @@
 // before a child takes the lock.
 //
 // The daemon holds its own session in the installation's client records. The
-// UI makes that session as `juice auth login <login>` would — from a password
-// typed at New agent, or at Start when the login has none, and kept nowhere —
-// and never reads one (requirements.md §5, ecosystem-standard §4). A daemon
+// UI makes that session as `juice auth login <login>` would — from the password
+// the operator types at New agent and at every Start, kept nowhere — and never
+// reads one (requirements.md §5, ecosystem-standard §4). The agent's account is
+// otherwise managed as the user it is: the operator switches to it (§5). A daemon
 // that exits states why in its log, and the page shows that line. The session,
 // the home and the credential are written or removed only while no daemon of
 // that login is alive.
@@ -43,7 +44,6 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -94,20 +94,25 @@ var (
 // Agents is the app. It holds no runtime state: the process supervisor runs the
 // daemons, each a program declared here.
 type Agents struct {
-	deps   apps.Deps
-	root   string     // $JUICE_HOME/agents; overridable in tests
-	client string     // $JUICE_HOME/client, the records an agent's session lives in
-	schema string     // $JUICE_HOME/schemas/juice-agent.schema.json, the daemon's schema of config.json
-	mu     sync.Mutex // one lifecycle post at a time (create, start, stop, delete)
+	deps      apps.Deps
+	assistant string     // the assistant's password, from the installer, until the assistant is made
+	root      string     // $JUICE_HOME/agents; overridable in tests
+	client    string     // $JUICE_HOME/client, the records an agent's session lives in
+	schema    string     // $JUICE_HOME/schemas/juice-agent.schema.json, the daemon's schema of config.json
+	mu        sync.Mutex // one lifecycle post at a time (create, start, stop, delete)
 }
 
 // New constructs the app. Root resolves on Start.
 func New() *Agents { return &Agents{} }
 
+// WithAssistant hands the app the password the installer asked for the
+// assistant; Start makes the assistant with it and forgets it.
+func (a *Agents) WithAssistant(password string) { a.assistant = password }
+
 func (a *Agents) Slug() string { return "agents" }
 
-// Nav contributes the Agents destination (no badge — this app has no async
-// attention signal), to the operator alone. Everything this app does happens on
+// Nav contributes the Agents destination, to the operator alone, its badge the
+// decisions waiting on the agents (decisions). Everything this app does happens on
 // the UI host — it writes the installation's files and runs a long-lived
 // daemon — so it is an operator surface, and an entry a non-superuser could not
 // use would be an invitation to a 403.
@@ -115,7 +120,7 @@ func (a *Agents) Nav(me string, superuser bool) []apps.NavEntry {
 	if me == "" || !superuser {
 		return nil
 	}
-	return []apps.NavEntry{{Slug: "agents", Label: "Agents", Href: "/agents", Icon: agentsIcon, Match: "/agents"}}
+	return []apps.NavEntry{{Slug: "agents", Label: "Agents", Href: "/agents", Icon: agentsIcon, Match: "/agents", Live: true}}
 }
 
 func (a *Agents) Templates() fs.FS { return tmplFS }
@@ -133,6 +138,7 @@ func (a *Agents) Mount(mux *http.ServeMux, d apps.Deps) {
 	mux.HandleFunc("POST /agents", d.RequireSuperuser(a.postCreate))
 	mux.HandleFunc("GET /agents/{handle}", d.RequireSuperuser(a.getDetail))
 	d.Watch("agent", a.watch)
+	d.Watch("agents", a.watchBadge)
 	mux.HandleFunc("POST /agents/{handle}/files/{file}", d.RequireSuperuser(a.postSaveFile))
 	mux.HandleFunc("POST /agents/{handle}/config", d.RequireSuperuser(a.postConfig))
 	mux.HandleFunc("POST /agents/{handle}/config/json", d.RequireSuperuser(a.postConfigJSON))
@@ -140,6 +146,7 @@ func (a *Agents) Mount(mux *http.ServeMux, d apps.Deps) {
 	mux.HandleFunc("POST /agents/{handle}/start", d.RequireSuperuser(a.postStart))
 	mux.HandleFunc("POST /agents/{handle}/stop", d.RequireSuperuser(a.postStop))
 	mux.HandleFunc("POST /agents/{handle}/delete", d.RequireSuperuser(a.postDelete))
+	mux.HandleFunc("POST /agents/{handle}/password", d.RequireSuperuser(a.postPassword))
 	mux.HandleFunc("POST /agents/{handle}/fund/review", d.RequireSuperuser(a.postFundReview))
 	mux.HandleFunc("POST /agents/{handle}/fund", d.RequireSuperuser(a.postFund))
 }
@@ -224,66 +231,66 @@ func (a *Agents) adopt() {
 // (requirements §6.7).
 const assistantHandle = "assistant"
 
-// agentsState is the app's state: the assistant's kernel password, made
-// once, so the account can be signed into again when its session is lost.
+// agentsState is the app's state: the assistant's kernel password an earlier
+// release made and kept, until the operator sets one (postPassword). Nothing
+// writes it any more.
 type agentsState struct {
 	AssistantPassword string `json:"assistant_password"`
 }
 
-// ensureAssistant makes the assistant exist and run: the account, made with
-// the password the app keeps (a handle the kernel already holds is adopted
-// only when that password signs in, which proves it is the app's), the
-// session, the home, and the daemon when it holds a session and has no program
-// yet: one it has says whether it runs, since a person may have stopped it. Never
-// fatal: what fails is logged, and the operator can do it from the page.
-func (a *Agents) ensureAssistant(ctx context.Context) {
-	if a.deps.Client == nil || a.deps.LoadAppState == nil || a.deps.Programs == nil {
-		return
+// heldPassword is the password an earlier release kept for handle, "" when none.
+func (a *Agents) heldPassword(handle string) string {
+	if handle != assistantHandle || a.deps.LoadAppState == nil {
+		return ""
 	}
+	var st agentsState
+	if raw, err := a.deps.LoadAppState(a.Slug()); err == nil && len(raw) > 0 {
+		_ = json.Unmarshal(raw, &st)
+	}
+	return st.AssistantPassword
+}
+
+// ensureAssistant makes the assistant with the password the installer asked
+// for, when there is one and no assistant yet, as New agent makes any agent
+// (make). The password is used once and forgotten. Never fatal: what fails is
+// logged, and the operator can make it from the page.
+func (a *Agents) ensureAssistant(ctx context.Context) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	h := assistantHandle
-	if _, err := a.agentDir(h); err != nil {
+	pw := a.assistant
+	a.assistant = ""
+	if pw == "" || a.deps.Client == nil || a.exists(assistantHandle) {
 		return
 	}
-	fail := func(step string, err error) {
-		a.log().Warn("agents: assistant", "step", step, "err", err)
-	}
-	if !a.exists(h) {
-		var st agentsState
-		if raw, err := a.deps.LoadAppState(a.Slug()); err == nil && len(raw) > 0 {
-			_ = json.Unmarshal(raw, &st)
-		}
-		if st.AssistantPassword == "" {
-			st.AssistantPassword = newPassword()
-			b, _ := json.Marshal(st)
-			if err := a.deps.SaveAppState(a.Slug(), b); err != nil {
-				fail("save password", err)
-				return
-			}
-		}
-		if _, err := a.deps.Client.CreateUser(ctx, a.deps.Address(h), st.AssistantPassword, ""); err != nil && !accountExists(err) {
-			fail("create account", err)
-			return
-		}
-		if err := a.signIn(ctx, h, st.AssistantPassword); err != nil {
-			fail("sign in", err)
-			return
-		}
-		if err := a.create(h); err != nil {
-			fail("home", err)
-			return
-		}
-	}
-	if _, err := os.Stat(a.credPath(h)); err != nil {
-		return
-	}
-	if _, err := a.declare(h, true); err != nil {
-		fail("start", err)
+	if err := a.make(ctx, assistantHandle, pw); err != nil {
+		a.log().Warn("agents: assistant", "err", err)
 	}
 }
 
-func newPassword() string {
+// make makes an agent from its handle and password: its account when the
+// kernel has none (one it holds is adopted only when the password signs in),
+// its session, its home, and its program, started. New agent and the
+// installer's assistant both come here.
+func (a *Agents) make(ctx context.Context, handle, password string) error {
+	// Headless, as the chat account: no recovery key.
+	if _, err := a.deps.Client.CreateUser(ctx, a.deps.Address(handle), password, ""); err != nil && !accountExists(err) {
+		return err
+	}
+	toks, err := a.deps.Client.SignIn(ctx, a.deps.Address(handle), password)
+	if err != nil {
+		return err
+	}
+	if err := a.deps.Client.RecordLogin(ctx, a.client, a.deps.Address(handle), toks); err != nil {
+		return err
+	}
+	if err := a.create(handle); err != nil {
+		return err
+	}
+	return a.start(handle)
+}
+
+// newKey is a fresh random key, naming one transfer so it happens once.
+func newKey() string {
 	var b [18]byte
 	_, _ = rand.Read(b[:])
 	return hex.EncodeToString(b[:])
@@ -318,34 +325,45 @@ func (a *Agents) agentDir(handle string) (string, error) {
 
 func validHandle(h string) bool { return len(h) <= 64 && handleRe.MatchString(h) }
 
-// list returns this kernel's agents under root: the homes named by one of its
-// logins, the page reading each account on this kernel.
-func (a *Agents) list(r *http.Request) ([]status, error) {
-	entries, err := os.ReadDir(a.root)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, err
-	}
-	suffix := strings.TrimPrefix(a.deps.Address("x"), "x")
+// cards are this kernel's agents (apps.AgentLogins) as the fleet's control
+// pane draws them: those that need the operator first — stopped on an error,
+// unable to work, or with decisions waiting — then by handle.
+func (a *Agents) cards(r *http.Request) ([]card, error) {
 	prices := map[string]int64{} // each model's price, read once for the page
-	var out []status
-	for _, e := range entries {
-		h, ok := strings.CutSuffix(e.Name(), suffix)
-		if !e.IsDir() || suffix == "" || !ok || !validHandle(h) {
+	var out []card
+	for _, login := range apps.AgentLogins(a.root, a.kernel()) {
+		h := strings.TrimSuffix(login, "@"+a.kernel())
+		if !validHandle(h) {
 			continue
 		}
-		st, err := a.status(r, h)
+		c, err := a.card(r, h, prices)
 		if err != nil {
 			return nil, err
 		}
-		st.Short = a.readiness(r, h, a.account(r, h), prices).Short
-		out = append(out, st)
+		out = append(out, c)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Handle < out[j].Handle })
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Attention() && !out[j].Attention() })
 	return out, nil
 }
+
+// card reads an agent as its row and its page draw it: its program's state,
+// its account, what one job needs, and what its own session shows.
+func (a *Agents) card(r *http.Request, handle string, prices map[string]int64) (card, error) {
+	st, err := a.status(r, handle)
+	if err != nil {
+		return card{}, err
+	}
+	c := card{status: st, Account: a.account(r, handle), Self: a.self(r.Context(), handle)}
+	c.Ready = a.readiness(r, handle, c.Account, prices)
+	c.Short = c.Ready.Short
+	if a.deps.Sessions != nil {
+		c.Accounts = a.deps.Sessions.Accounts(r.Context())
+	}
+	return c, nil
+}
+
+// kernel is this kernel's name, "" while unknown.
+func (a *Agents) kernel() string { return strings.TrimPrefix(a.deps.Address("x"), "x@") }
 
 // create makes a new home holding a blank agent.md, never truncating one that
 // exists. config.json stays absent: the daemon's defaults.
@@ -446,57 +464,83 @@ func (a *Agents) remove(handle string) error {
 }
 
 func (a *Agents) exists(handle string) bool {
-	dir, err := a.agentDir(handle)
-	if err != nil {
-		return false
-	}
-	_, err = os.Stat(dir)
-	return err == nil
+	return validHandle(handle) && apps.IsAgent(a.root, a.kernel(), a.deps.Address(handle))
 }
 
 // ---- view models ----
 
-// status is an agent's state as the shared _agent_status fragment renders it,
-// in a list row, in the polled fragment and on the detail page alike.
+// status is an agent's program's state, as its row and its page state it.
 type status struct {
 	Handle   string
 	Running  bool
-	CSRF     template.HTML // the fragment carries its own Stop/Start form (rendered outside the Page envelope)
+	CSRF     template.HTML // the row's commands carry it (a heartbeat answer has no Page envelope)
 	LastLine string        // the daemon's exit error from its current run, when stopped
-
-	// AskPassword: Start opens the password dialog, because the login has no
-	// session to serve on — no credential file, or the last run ended with the
-	// daemon's own advice to log in. With a session, Start is one click.
-	AskPassword bool
-	// State is the token the page's heartbeat carries for this agent: the
-	// state word — running, ask or stopped — and, when the block shows an exit
-	// line, a digest of it; the block is swapped only when either changes.
+	// State is the token the heartbeat carries for this agent's row: running
+	// or stopped and, when it has an exit line, a digest of it; the row's pill
+	// and commands are answered only when either changes.
 	State string
-	OOB   bool // a heartbeat answer: the block replaces itself in place
-	// Short is why the agent cannot work, beside the block and not in it:
-	// "no funds" or "budget too low", read by the page, never by the heartbeat.
+	OOB   bool // a heartbeat answer: the pill and the commands replace themselves in place
+	// Short is what stops a running agent working: "suspended", "no funds" or
+	// "budget too low" (readiness), "" when nothing does.
 	Short string
+	// Ready is what one job needs: the model, its call's price and the budget
+	// per job, stated on its page.
+	Ready readiness
+}
+
+// Pill is the agent's one state word: stopped, else what stops it working,
+// else running.
+func (s status) Pill() string {
+	switch {
+	case !s.Running:
+		return "stopped"
+	case s.Short != "":
+		return s.Short
+	}
+	return "running"
+}
+
+// card is an agent as its row in the fleet's list (_agent_row,
+// _agent_dialogs) and its page draw it: its program's state, its account,
+// what its own session shows, and the state of its dialogs.
+type card struct {
+	status
+	// An agent IS a user: it holds its own principal on this kernel, funded
+	// like anybody's, and spends it (ecosystem-standard §6). Account is that
+	// account as the operator reads it, with the operator's own token, and nil
+	// when this home has no kernel account yet.
+	Account  *client.AdminUser
+	Self     self
+	Accounts []string // the accounts the session holds: Switch is one click to them
+	OpenForm string   // the dialog that renders [open]
+	Error    string   // why it came back open
+	Fund     fundView // the Fund dialogs' state
+}
+
+// Attention reports an agent that needs the operator: stopped on an error,
+// running but unable to work, or with decisions waiting.
+func (c card) Attention() bool {
+	return (!c.Running && c.LastLine != "") || (c.Running && c.Short != "") || c.Self.Decisions > 0
+}
+
+// self is what an agent's own session shows: the decisions waiting on it and
+// when it last acted.
+type self struct {
+	Decisions  int
+	LastActive string // the start of its newest transaction, "" when none
 }
 
 func (a *Agents) status(r *http.Request, handle string) (status, error) {
 	running, err := a.running(handle)
-	st := status{Handle: handle, Running: running, CSRF: a.deps.CSRFField(r)}
-	if !running {
+	st := status{Handle: handle, Running: running, CSRF: a.deps.CSRFField(r), State: "stopped"}
+	if running {
+		st.State = "running"
+	} else {
 		prog, _ := a.deps.Programs.Status(programName(a.deps.Address(handle)))
 		st.LastLine = exitError(prog.Log)
 		if prog.Err != "" {
 			st.LastLine = prog.Err
 		}
-		_, statErr := os.Stat(a.credPath(handle))
-		st.AskPassword = os.IsNotExist(statErr) || strings.Contains(st.LastLine, "juice auth login")
-	}
-	switch {
-	case running:
-		st.State = "running"
-	case st.AskPassword:
-		st.State = "ask"
-	default:
-		st.State = "stopped"
 	}
 	if st.LastLine != "" {
 		h := fnv.New32a()
@@ -506,9 +550,10 @@ func (a *Agents) status(r *http.Request, handle string) (status, error) {
 	return st, err
 }
 
-// watch answers the heartbeat for one agent: its status block when its state
-// differs from the one shown, nothing otherwise, and nothing to anyone but
-// the operator (the routes it mirrors are the operator's).
+// watch answers the heartbeat for one agent's row: its pill and its commands
+// when its program's state differs from the one shown, nothing otherwise, and
+// nothing to anyone but the operator (the routes it mirrors are the
+// operator's).
 func (a *Agents) watch(r *http.Request, handle, shown string) (template.HTML, error) {
 	if !a.deps.Superuser(r) || !a.exists(handle) {
 		return "", nil
@@ -517,8 +562,79 @@ func (a *Agents) watch(r *http.Request, handle, shown string) (template.HTML, er
 	if err != nil || st.State == shown {
 		return "", err
 	}
-	st.OOB = true
-	return a.deps.Fragment("_agent_status", st)
+	c, err := a.card(r, handle, map[string]int64{})
+	if err != nil {
+		return "", err
+	}
+	c.OOB = true
+	pill, err := a.deps.Fragment("_agent_state", c)
+	if err != nil {
+		return "", err
+	}
+	commands, err := a.deps.Fragment("_agent_commands", c)
+	return pill + commands, err
+}
+
+// watchBadge keeps the Agents row's badge current: the decisions waiting on
+// every agent, for the operator alone.
+func (a *Agents) watchBadge(r *http.Request, key, shown string) (template.HTML, error) {
+	if key != "badge" || !a.deps.Superuser(r) {
+		return "", nil
+	}
+	n := 0
+	for _, login := range apps.AgentLogins(a.root, a.kernel()) {
+		n += a.self(r.Context(), strings.TrimSuffix(login, "@"+a.kernel())).Decisions
+	}
+	if strconv.Itoa(n) == shown {
+		return "", nil
+	}
+	return apps.Badge("agents", "Decisions waiting", n), nil
+}
+
+// self reads what an agent's own session shows: the decisions waiting on it —
+// requesters awaiting approval, whose tasks the kernel withholds (U52), and
+// waiting tasks addressed to it that take no input, an invitation above all,
+// which its program cannot do and the operator decides by switching to it —
+// and the start of its newest transaction. An agent with no session shows none.
+func (a *Agents) self(ctx context.Context, handle string) self {
+	var out self
+	if a.deps.Client == nil {
+		return out
+	}
+	login := a.deps.Address(handle)
+	_ = a.deps.Client.WithLogin(ctx, a.client, login, func(tok string) error {
+		reqs, err := a.deps.Client.ListRequesters(ctx, tok)
+		if err != nil {
+			return err
+		}
+		for _, q := range reqs {
+			if q.Status == "pending" {
+				out.Decisions++
+			}
+		}
+		tasks, err := a.deps.Client.WaitingTasks(ctx, tok)
+		if err != nil {
+			return err
+		}
+		for _, t := range tasks {
+			if t.Waiting() && t.RequiredCaller.Address == login && takesNoInput(t.AllowedInput) {
+				out.Decisions++
+			}
+		}
+		if txs, err := a.deps.Client.TransactionsPage(ctx, tok, "", 1, 0); err == nil && len(txs) > 0 {
+			out.LastActive = txs[0].StartedAt
+		}
+		return nil
+	})
+	return out
+}
+
+// takesNoInput reports a completion schema that declares no field at all.
+func takesNoInput(schema json.RawMessage) bool {
+	var s struct {
+		Properties *map[string]json.RawMessage `json:"properties"`
+	}
+	return json.Unmarshal(schema, &s) == nil && s.Properties != nil && len(*s.Properties) == 0
 }
 
 // running is whether a daemon serves handle: one holds the home's lock, or the
@@ -568,38 +684,39 @@ func exitError(logPath string) string {
 }
 
 type listView struct {
-	Agents   []status
+	Agents   []card
 	OpenForm bool
 	Error    string // why the New agent dialog came back open
 	Handle   string // the handle as typed, kept in that dialog
 }
 
+// detailView is an agent's page: its card, and its settings.
 type detailView struct {
-	status
-	Agent    string // agent.md
-	Config   any    // config.json as the editor's form; an absent file is {}
-	Version  string // the file's version, carried by the form and checked by a save
-	OpenForm string // the ?form= value; selects which dialog renders [open]
-	Error    string // why the Sign in dialog came back open
+	card
+	Held    bool   // an earlier release keeps this agent's password: Set password
+	Agent   string // agent.md
+	Config  any    // config.json as the editor's form; an absent file is {}
+	Version string // the file's version, carried by the form and checked by a save
+}
 
-	// An agent IS a user: it holds its own principal on this kernel, funded like
-	// anybody's, and spends it (ecosystem-standard §6). Account is that account
-	// as the operator reads it, and nil when this home has no kernel account yet
-	// — a scaffolded agent that has never been created is a directory, not a
-	// principal, and saying so is better than showing a zero.
-	//
-	// This is read with the VIEWER's own token. The app is the operator's (they
-	// alone reach it), so the read is an ordinary superuser read of a user row,
-	// not the UI holding somebody else's credential.
-	Account *client.AdminUser
-	Ready   readiness
-	Fund    fundView // the Fund dialogs' state
+// Instructions is the first line of agent.md, as its settings row shows it.
+func (v detailView) Instructions() string {
+	for _, l := range strings.Split(v.Agent, "\n") {
+		if l = strings.TrimSpace(l); l != "" {
+			if len([]rune(l)) > 60 {
+				l = string([]rune(l)[:60]) + "…"
+			}
+			return l
+		}
+	}
+	return ""
 }
 
 // readiness is whether an agent can do one job: one model call of the action
 // its config reasons with, at that action's live price, against its balance
 // and its budget per job. Call is 0 when the config names no model.
 type readiness struct {
+	Reason client.Party // the model action its config reasons with, as its config names it
 	Call   int64
 	Budget int64
 	Short  string
@@ -614,7 +731,7 @@ func (a *Agents) readiness(r *http.Request, handle string, acct *client.AdminUse
 	}
 	raw, _ := a.readFile(handle, configFile)
 	_ = json.Unmarshal([]byte(raw), &cfg)
-	var rd readiness
+	rd := readiness{Reason: client.Party{Address: cfg.Reason}}
 	if cfg.Budget != nil {
 		rd.Budget = *cfg.Budget
 	}
@@ -633,6 +750,8 @@ func (a *Agents) readiness(r *http.Request, handle string, acct *client.AdminUse
 	}
 	switch {
 	case acct == nil:
+	case acct.Suspended():
+		rd.Short = "suspended"
 	case acct.Available < max(rd.Call, 1):
 		rd.Short = "no funds"
 	case cfg.Budget != nil && rd.Budget < rd.Call:
@@ -659,21 +778,43 @@ func (f fundView) Total() int64 { return f.Amount + f.Price }
 // ---- handlers ----
 
 func (a *Agents) getIndex(w http.ResponseWriter, r *http.Request) {
-	a.renderList(w, r, http.StatusOK, listView{OpenForm: r.URL.Query().Get("form") == "agent-create"})
+	q := r.URL.Query()
+	a.renderList(w, r, http.StatusOK, listView{OpenForm: q.Get("form") == "agent-create"}, func(c *card) {
+		if c.Handle == q.Get("handle") {
+			c.OpenForm = q.Get("form")
+		}
+	})
 }
 
-func (a *Agents) renderList(w http.ResponseWriter, r *http.Request, code int, v listView) {
-	rows, err := a.list(r)
+// renderList renders the fleet's list; at, when not nil, sets the dialog state
+// of the agent a command was given to there.
+func (a *Agents) renderList(w http.ResponseWriter, r *http.Request, code int, v listView, at func(*card)) {
+	cards, err := a.cards(r)
 	if a.deps.HandleErr(w, r, err) {
 		return
 	}
-	v.Agents = rows
-	a.deps.RenderPage(w, r, code, "agents", "agents", v)
+	for i := range cards {
+		if at != nil {
+			at(&cards[i])
+		}
+	}
+	v.Agents = cards
+	a.deps.RenderPage(w, r, code, "agents", "Agents", v)
 }
 
-// postCreate makes an agent from a handle and its kernel password: the account
-// when the kernel has none, the session, the home, and the daemon. Each refusal
-// returns the dialog open with the handle kept and the password gone.
+// reopen answers a command given in the fleet's list with its dialog open
+// again over the list, saying errMsg, with the Fund state.
+func (a *Agents) reopen(w http.ResponseWriter, r *http.Request, code int, handle, form, errMsg string, fund fundView) {
+	a.renderList(w, r, code, listView{}, func(c *card) {
+		if c.Handle == handle {
+			c.OpenForm, c.Error, c.Fund = form, errMsg, fund
+		}
+	})
+}
+
+// postCreate makes an agent from a handle and the password the operator chose
+// for it, typed twice (make). Each refusal returns the dialog open with the
+// handle kept and the passwords gone.
 func (a *Agents) postCreate(w http.ResponseWriter, r *http.Request) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -682,7 +823,7 @@ func (a *Agents) postCreate(w http.ResponseWriter, r *http.Request) {
 	// refuses it the same way at its own boundary).
 	handle, password := strings.TrimSpace(r.FormValue("handle")), r.FormValue("password")
 	refuse := func(msg string) {
-		a.renderList(w, r, http.StatusUnprocessableEntity, listView{OpenForm: true, Error: msg, Handle: handle})
+		a.renderList(w, r, http.StatusUnprocessableEntity, listView{OpenForm: true, Error: msg, Handle: handle}, nil)
 	}
 	switch {
 	case !validHandle(handle):
@@ -692,29 +833,17 @@ func (a *Agents) postCreate(w http.ResponseWriter, r *http.Request) {
 		refuse("That handle already exists.")
 		return
 	case password == "":
-		refuse("Kernel password is required.")
+		refuse("A password is required.")
+		return
+	case password != r.FormValue("confirm_password"):
+		refuse("The passwords don't match.")
 		return
 	}
-	ctx := r.Context()
-	// Headless, as the chat account: no recovery key. A handle the kernel
-	// already holds is adopted, and the password proves it on sign-in.
-	if _, err := a.deps.Client.CreateUser(ctx, a.deps.Address(handle), password, ""); err != nil && !accountExists(err) {
+	if err := a.make(r.Context(), handle, password); err != nil {
 		refuse(signInMessage(err))
 		return
 	}
-	if err := a.signIn(ctx, handle, password); err != nil {
-		refuse(signInMessage(err))
-		return
-	}
-	if err := a.create(handle); err != nil {
-		a.deps.HandleErr(w, r, err)
-		return
-	}
-	if err := a.start(handle); err != nil {
-		a.deps.FlashRedirect(w, r, "/agents/"+handle, "error", "Could not start: "+err.Error())
-		return
-	}
-	a.deps.FlashRedirect(w, r, "/agents/"+handle+"?form=fund", "success", "Agent created.")
+	a.deps.FlashRedirect(w, r, "/agents?form=fund&handle="+handle, "success", "Agent created.")
 }
 
 // accountExists reads the kernel's refusal of a handle it already holds.
@@ -743,15 +872,14 @@ func (a *Agents) getDetail(w http.ResponseWriter, r *http.Request) {
 	a.renderDetail(w, r, http.StatusOK, handle, r.URL.Query().Get("form"), "")
 }
 
+// renderDetail renders the agent's page: its state, its facts and its
+// settings, the dialog form open with errMsg.
 func (a *Agents) renderDetail(w http.ResponseWriter, r *http.Request, code int, handle, form, errMsg string) {
-	a.renderDetailFund(w, r, code, handle, form, errMsg, fundView{})
-}
-
-func (a *Agents) renderDetailFund(w http.ResponseWriter, r *http.Request, code int, handle, form, errMsg string, fund fundView) {
-	st, err := a.status(r, handle)
+	c, err := a.card(r, handle, map[string]int64{})
 	if a.deps.HandleErr(w, r, err) {
 		return
 	}
+	c.OpenForm, c.Error = form, errMsg
 	agent, _ := a.readFile(handle, agentFile)
 	file, err := a.readFile(handle, configFile)
 	if a.deps.HandleErr(w, r, err) {
@@ -761,17 +889,12 @@ func (a *Agents) renderDetailFund(w http.ResponseWriter, r *http.Request, code i
 	if a.deps.HandleErr(w, r, err) {
 		return
 	}
-	acct := a.account(r, handle)
-	a.deps.RenderPage(w, r, code, "agent", "agents", detailView{
-		status:   st,
-		Agent:    agent,
-		Config:   config,
-		Version:  a.editor().Version([]byte(file)),
-		OpenForm: form,
-		Error:    errMsg,
-		Account:  acct,
-		Ready:    a.readiness(r, handle, acct, map[string]int64{}),
-		Fund:     fund,
+	a.deps.RenderPage(w, r, code, "agent", handle, detailView{
+		card:    c,
+		Held:    a.heldPassword(handle) != "",
+		Agent:   agent,
+		Config:  config,
+		Version: a.editor().Version([]byte(file)),
 	})
 }
 
@@ -792,7 +915,7 @@ func (a *Agents) postFundReview(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		f.Error = capitalize(err.Error()) + "."
-		a.renderDetailFund(w, r, http.StatusUnprocessableEntity, handle, "fund", "", f)
+		a.reopen(w, r, http.StatusUnprocessableEntity, handle, "fund", "", f)
 		return
 	}
 	f.Amount = amount
@@ -808,8 +931,8 @@ func (a *Agents) postFundReview(w http.ResponseWriter, r *http.Request) {
 		a.fundRefused(w, r, handle, f, err)
 		return
 	}
-	f.Key = newPassword()
-	a.renderDetailFund(w, r, http.StatusOK, handle, "fund-review", "", f)
+	f.Key = newKey()
+	a.reopen(w, r, http.StatusOK, handle, "fund-review", "", f)
 }
 
 // postFund moves the amount reviewed from the operator to the agent: one run
@@ -826,7 +949,7 @@ func (a *Agents) postFund(w http.ResponseWriter, r *http.Request) {
 	f := fundView{Typed: r.FormValue("amount"), Quote: r.FormValue("quote"), Key: r.FormValue("key"), Price: price}
 	amount, err := a.deps.Amount(f.Typed)
 	if err != nil || amount <= 0 || f.Quote == "" || f.Key == "" {
-		a.deps.FlashRedirect(w, r, "/agents/"+handle+"?form=fund", "error", "Review the amount first.")
+		a.deps.FlashRedirect(w, r, "/agents?form=fund&handle="+handle, "error", "Review the amount first.")
 		return
 	}
 	f.Amount = amount
@@ -837,23 +960,23 @@ func (a *Agents) postFund(w http.ResponseWriter, r *http.Request) {
 	})
 	if ke, ok := client.AsKernelError(err); ok && ke.Kind == client.KindTermsChanged {
 		f.Price, _ = ke.MetaInt64("price")
-		f.Quote, f.Key = ke.MetaString("quote_hash"), newPassword()
+		f.Quote, f.Key = ke.MetaString("quote_hash"), newKey()
 		f.Error = "The transfer's price changed; nothing was sent."
-		a.renderDetailFund(w, r, http.StatusConflict, handle, "fund-review", "", f)
+		a.reopen(w, r, http.StatusConflict, handle, "fund-review", "", f)
 		return
 	}
 	if err != nil && unknownOutcome(err) {
 		// The transfer may have happened: the same key asks again, and the
 		// kernel answers a repeat with the first run's outcome.
 		f.Error = "The transfer's outcome is not known yet. Fund again sends nothing twice."
-		a.renderDetailFund(w, r, http.StatusOK, handle, "fund-review", "", f)
+		a.reopen(w, r, http.StatusOK, handle, "fund-review", "", f)
 		return
 	}
 	if err != nil {
 		a.fundRefused(w, r, handle, f, err)
 		return
 	}
-	a.deps.FlashRedirect(w, r, "/agents/"+handle, "success", "Funded "+a.deps.Money(amount)+" · "+a.deps.Address(handle)+".")
+	a.deps.FlashRedirect(w, r, "/agents", "success", "Funded "+a.deps.Money(amount)+" · "+a.deps.Address(handle)+".")
 }
 
 // unknownOutcome reports a run whose outcome is not known: no answer reached
@@ -882,7 +1005,7 @@ func (a *Agents) fundRefused(w http.ResponseWriter, r *http.Request, handle stri
 	if ke, ok := client.AsKernelError(err); ok {
 		f.Error = ke.UserMessage()
 	}
-	a.renderDetailFund(w, r, http.StatusUnprocessableEntity, handle, "fund", "", f)
+	a.reopen(w, r, http.StatusUnprocessableEntity, handle, "fund", "", f)
 }
 
 func (a *Agents) postSaveFile(w http.ResponseWriter, r *http.Request) {
@@ -944,7 +1067,7 @@ func (a *Agents) postConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	msg := "Saved."
 	if running, _ := a.running(handle); running {
-		msg = "Saved; the agent applies it at its next start."
+		msg = "Saved. Stop and start " + handle + " to apply."
 	}
 	a.deps.FlashRedirect(w, r, back, "success", msg)
 }
@@ -1015,11 +1138,10 @@ func (a *Agents) postDelete(w http.ResponseWriter, r *http.Request) {
 	a.deps.FlashRedirect(w, r, "/agents", "success", "Agent deleted.")
 }
 
-// postStart has the supervisor run `juice-agent serve <login>` unless a daemon
-// already serves it. A password in the post makes the login's session first (an
-// agent with none, or whose session died); a refusal returns the dialog open and
-// starts nothing. The daemon brings its own session, and a refusal of its own is
-// read back from its log by the status.
+// postStart starts a stopped agent with the password the operator types,
+// every time (requirements §6.1): the password signs in, and only then is the
+// session recorded and the daemon started, so a wrong password changes nothing.
+// An agent already running is left as it is.
 func (a *Agents) postStart(w http.ResponseWriter, r *http.Request) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -1028,26 +1150,67 @@ func (a *Agents) postStart(w http.ResponseWriter, r *http.Request) {
 		a.notFound(w, r)
 		return
 	}
-	back := returnPath(r, "/agents/"+handle)
 	running, err := a.running(handle)
 	if a.deps.HandleErr(w, r, err) {
 		return
 	}
 	if running {
-		http.Redirect(w, r, back, http.StatusSeeOther)
+		http.Redirect(w, r, "/agents", http.StatusSeeOther)
 		return
 	}
-	if pw := r.FormValue("password"); pw != "" {
-		if err := a.signIn(r.Context(), handle, pw); err != nil {
-			a.renderDetail(w, r, http.StatusUnprocessableEntity, handle, "start", signInMessage(err))
-			return
-		}
+	toks, err := a.deps.Client.SignIn(r.Context(), a.deps.Address(handle), r.FormValue("password"))
+	if err != nil {
+		a.reopen(w, r, http.StatusUnprocessableEntity, handle, "start", signInMessage(err), fundView{})
+		return
+	}
+	if err := a.deps.Client.RecordLogin(r.Context(), a.client, a.deps.Address(handle), toks); err != nil {
+		a.reopen(w, r, http.StatusUnprocessableEntity, handle, "start", signInMessage(err), fundView{})
+		return
 	}
 	if err := a.start(handle); err != nil {
-		a.deps.FlashRedirect(w, r, back, "error", "Could not start: "+err.Error())
+		a.deps.FlashRedirect(w, r, "/agents", "error", "Could not start: "+err.Error())
 		return
 	}
-	http.Redirect(w, r, back, http.StatusSeeOther)
+	http.Redirect(w, r, "/agents", http.StatusSeeOther)
+}
+
+// postPassword sets the password of an agent whose password an earlier
+// release made and kept: it signs in with the kept one, changes it to the one
+// typed twice, ends that session and forgets the kept one. A command of its
+// own, not folded into Start: an agent account has no recovery phrase, so a
+// mistyped password must not become the account's unseen.
+func (a *Agents) postPassword(w http.ResponseWriter, r *http.Request) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	handle := r.PathValue("handle")
+	held := a.heldPassword(handle)
+	if !a.exists(handle) || held == "" {
+		a.notFound(w, r)
+		return
+	}
+	password := r.FormValue("password")
+	switch {
+	case password == "":
+		a.renderDetail(w, r, http.StatusUnprocessableEntity, handle, "password", "A password is required.")
+		return
+	case password != r.FormValue("confirm_password"):
+		a.renderDetail(w, r, http.StatusUnprocessableEntity, handle, "password", "The passwords don't match.")
+		return
+	}
+	ctx := r.Context()
+	toks, err := a.deps.Client.SignIn(ctx, a.deps.Address(handle), held)
+	if err == nil {
+		_, err = a.deps.Client.UpdateMe(ctx, toks.AccessToken, client.UpdateMeInput{CurrentPassword: held, Password: password})
+		_ = a.deps.Client.Logout(context.WithoutCancel(ctx), toks.RefreshToken)
+	}
+	if err != nil {
+		a.renderDetail(w, r, http.StatusUnprocessableEntity, handle, "password", signInMessage(err))
+		return
+	}
+	if err := a.deps.SaveAppState(a.Slug(), json.RawMessage(`{}`)); a.deps.HandleErr(w, r, err) {
+		return
+	}
+	a.deps.FlashRedirect(w, r, "/agents/"+handle, "success", "Password set.")
 }
 
 // postStop has the supervisor stop the daemon serving handle, whoever started it,
@@ -1056,41 +1219,32 @@ func (a *Agents) postStop(w http.ResponseWriter, r *http.Request) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	handle := r.PathValue("handle")
-	if _, err := a.agentDir(handle); err != nil {
+	if !a.exists(handle) {
 		a.notFound(w, r)
 		return
 	}
-	name, err := a.declare(handle, false)
-	if err == nil {
-		err = a.deps.Programs.Stop(name)
-	}
-	if a.deps.HandleErr(w, r, err) {
+	if err := a.stop(handle); a.deps.HandleErr(w, r, err) {
 		return
 	}
-	http.Redirect(w, r, returnPath(r, "/agents/"+handle), http.StatusSeeOther)
+	http.Redirect(w, r, "/agents", http.StatusSeeOther)
+}
+
+// stop has the supervisor stop handle's daemon and keep it stopped.
+func (a *Agents) stop(handle string) error {
+	name, err := a.declare(handle, false)
+	if err != nil {
+		return err
+	}
+	return a.deps.Programs.Stop(name)
+}
+
+// credPath is the credential file of handle's login (ecosystem-standard §4).
+func (a *Agents) credPath(handle string) string {
+	return filepath.Join(a.client, "credentials", a.deps.Address(handle)+".json")
 }
 
 func (a *Agents) notFound(w http.ResponseWriter, r *http.Request) {
 	a.deps.HandleErr(w, r, client.ErrNotFound)
-}
-
-// returnPath resolves where to redirect after a lifecycle action so it lands back
-// on the page it was triggered from (the list or the agent's detail). Only a local
-// /agents path from the Referer is honored; anything else falls back — never an
-// open redirect (the host is discarded).
-func returnPath(r *http.Request, fallback string) string {
-	ref := r.Header.Get("Referer")
-	if ref == "" {
-		return fallback
-	}
-	u, err := url.Parse(ref)
-	if err != nil {
-		return fallback
-	}
-	if u.Path == "/agents" || strings.HasPrefix(u.Path, "/agents/") {
-		return u.Path
-	}
-	return fallback
 }
 
 // ---- root/binary resolution ----

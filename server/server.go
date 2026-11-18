@@ -347,6 +347,7 @@ func New(o Options) (http.Handler, error) {
 	mux.HandleFunc("GET /recovery-phrase", s.getRecoveryPhrase)
 	mux.HandleFunc("POST /recovery-phrase", s.postRecoveryPhrase)
 	mux.HandleFunc("POST /logout", s.postLogout)
+	mux.HandleFunc("POST /switch", s.requireAuth(s.postSwitch))
 	mux.HandleFunc("POST /theme", s.postTheme)
 	mux.HandleFunc("POST /sidebar", s.postSidebar)
 
@@ -449,10 +450,12 @@ func New(o Options) (http.Handler, error) {
 	// gated behind requireAuth here so a module handler always has a session.
 	deps := s.appDeps()
 	for _, f := range s.apps {
+		d := deps
 		if c, ok := f.(apps.Conversations); ok {
 			s.conv = c
+			d = s.conversationDeps(deps, c)
 		}
-		f.Mount(mux, deps) // Mount first: a module stashes Deps here, then uses it in Start.
+		f.Mount(mux, d) // Mount first: a module stashes Deps here, then uses it in Start.
 		if err := f.Start(context.Background()); err != nil {
 			return nil, err
 		}
@@ -607,9 +610,10 @@ func shortID(s string) string {
 }
 
 // gate admits a session that is present, unexpired and signed in to the
-// kernel at this address. act says the request is the person's own act and
-// counts as activity; the heartbeat's is not — a page left open is nobody
-// present — so it can only observe the idle rule, never extend it.
+// kernel at this address, acting as the account the page was rendered for. act
+// says the request is the person's own act and counts as activity; the
+// heartbeat's is not — a page left open is nobody present — so it can only
+// observe the idle rule, never extend it.
 func (s *Server) gate(act bool, h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
@@ -627,6 +631,9 @@ func (s *Server) gate(act bool, h http.HandlerFunc) http.HandlerFunc {
 		if s.kernelChanged(w, r) {
 			return
 		}
+		if s.otherAccount(w, r) {
+			return
+		}
 		if act {
 			s.sessions.Touch(ctx)
 		}
@@ -634,11 +641,89 @@ func (s *Server) gate(act bool, h http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+// accountField and accountHeader carry the account a page was rendered for:
+// beside the CSRF token in every form (csrfField), and in every script request
+// (the layout's account meta, app.js). A session holds several accounts
+// (session.Manager), so a page opened before a switch would otherwise act, or
+// read, as the account switched to.
+const (
+	accountField  = "juice_account"
+	accountHeader = "X-Juice-Account"
+)
+
+// otherAccount answers a request made from a page of another account than the
+// one in use, before any handler or watcher runs: htmx's (a heartbeat, a
+// fragment) sends its page to the landing, which renders as the account in
+// use; a form says nothing was done; a native script request is refused 412
+// with no redirect, since fetch would carry its header through the redirect
+// and loop, and its caller reloads the page. A request naming no account (a
+// navigation) acts as the account in use.
+func (s *Server) otherAccount(w http.ResponseWriter, r *http.Request) bool {
+	page := r.Header.Get(accountHeader)
+	if page == "" && r.Method == http.MethodPost {
+		page = r.FormValue(accountField)
+	}
+	using := s.sessions.Address(r.Context())
+	if page == "" || page == using {
+		return false
+	}
+	switch {
+	case isHTMX(r):
+		hxRedirect(w, r, "/")
+	case r.Header.Get(accountHeader) != "":
+		http.Error(w, "This page was open as "+page+", and "+using+" is in use now. Reload it.", http.StatusPreconditionFailed)
+	default:
+		s.flashRedirect(w, r, "/", "error", "Nothing was done: that page was open as "+page+", and "+using+" is in use now.")
+	}
+	return true
+}
+
+// csrfField is what every form carries: the CSRF token and the account the
+// page was rendered for.
+func (s *Server) csrfField(r *http.Request) template.HTML {
+	return csrf.TemplateField(r) + template.HTML(`<input type="hidden" name="`+accountField+`" value="`+
+		template.HTMLEscapeString(s.sessions.Address(r.Context()))+`">`)
+}
+
+// conversations is the conversations app when it serves the request's
+// account (apps.Conversations.Serves), nil otherwise: the one place the core
+// asks whom it serves.
+func (s *Server) conversations(r *http.Request) apps.Conversations {
+	if s.conv != nil && s.conv.Serves(r) {
+		return s.conv
+	}
+	return nil
+}
+
+// conversationDeps are the conversations app's dependencies, its routes and
+// watchers closed to an account it does not serve: a route sends the browser
+// to the landing, a watcher answers nothing.
+func (s *Server) conversationDeps(d apps.Deps, c apps.Conversations) apps.Deps {
+	d.RequireAuth = func(h http.HandlerFunc) http.HandlerFunc {
+		return s.requireAuth(func(w http.ResponseWriter, r *http.Request) {
+			if !c.Serves(r) {
+				hxRedirect(w, r, "/")
+				return
+			}
+			h(w, r)
+		})
+	}
+	d.Watch = func(kind string, fn apps.Watcher) {
+		s.watch(kind, func(r *http.Request, key, shown string) (template.HTML, error) {
+			if !c.Serves(r) {
+				return "", nil
+			}
+			return fn(r, key, shown)
+		})
+	}
+	return d
+}
+
 // requireAuth gates a request the person made.
 func (s *Server) requireAuth(h http.HandlerFunc) http.HandlerFunc { return s.gate(true, h) }
 
-// endSession is the one exit: the session is destroyed, and its refresh token
-// revoked (R5.4) only at the kernel that issued it. A credential travels to its
+// endSession is the one exit: the session is destroyed, every account with
+// it, and each refresh token revoked (R5.4) only at the kernel that issued it. A credential travels to its
 // issuer alone (ecosystem-standard §5), so a kernel that is unknown or no
 // longer the pinned one is told nothing. The session ends before the call, so
 // the pair revoked is the last one stored (session.Manager.Logout). A
@@ -648,8 +733,11 @@ func (s *Server) requireAuth(h http.HandlerFunc) http.HandlerFunc { return s.gat
 func (s *Server) endSession(ctx context.Context) {
 	id := s.kernelIdentity(ctx)
 	issuer := id.PublicKey != "" && s.sessions.Pin(ctx) == session.Pin{PublicKey: id.PublicKey, NetworkFingerprint: id.NetworkFingerprint}
-	if toks, _ := s.sessions.Logout(ctx); toks.RefreshToken != "" && issuer {
-		_ = s.client.Logout(context.WithoutCancel(ctx), toks.RefreshToken)
+	pairs, _ := s.sessions.Logout(ctx)
+	for _, toks := range pairs {
+		if toks.RefreshToken != "" && issuer {
+			_ = s.client.Logout(context.WithoutCancel(ctx), toks.RefreshToken)
+		}
 	}
 }
 
@@ -780,7 +868,7 @@ func (s *Server) appDeps() apps.Deps {
 		HandleErrFragment: s.handleErrFragment,
 		Redirect:          hxRedirect,
 		FlashRedirect:     s.flashRedirect,
-		CSRFField:         func(r *http.Request) template.HTML { return csrf.TemplateField(r) },
+		CSRFField:         s.csrfField,
 		IsHTMX:            isHTMX,
 		Me:                func(r *http.Request) string { return s.sessions.Address(r.Context()) },
 		Viewer:            s.me,
@@ -849,11 +937,14 @@ func (s *Server) page(r *http.Request, title string, data any) Page {
 	kernelID := s.kernelIdentity(r.Context())
 	var cmds []Command
 	var rail template.HTML
+	var signIn signInView
 	if s.sessions.IsAuthenticated(r.Context()) {
 		cmds = s.commands(r)
-		if s.conv != nil {
+		q := r.URL.Query()
+		signIn = signInView{Open: q.Get("form") == "signin", Handle: q.Get("handle"), Path: r.URL.Path, CSRFField: s.csrfField(r)}
+		if c := s.conversations(r); c != nil {
 			var err error
-			if rail, err = s.conv.Rail(r); err != nil {
+			if rail, err = c.Rail(r); err != nil {
 				s.log.Warn("rail", "err", err)
 			}
 		}
@@ -869,19 +960,21 @@ func (s *Server) page(r *http.Request, title string, data any) Page {
 		Commands:     cmds,
 		Rail:         rail,
 		Me:           s.sessions.Address(r.Context()),
+		Accounts:     s.sessions.Accounts(r.Context()),
 		KernelHandle: kernelID.Handle,
 		KernelKey:    kernelID.PublicKey,
 		KernelNet:    kernelID.Network,
 		KernelName:   s.kernelName,
 		IsSuperuser:  super,
 		Themes:       ThemeList(),
-		CSRFField:    csrf.TemplateField(r),
+		CSRFField:    s.csrfField(r),
 		CSRFToken:    csrf.Token(r),
 		Launcher:     template.JS(commandsJSON(cmds)),
 		Flash:        flash,
 		FlashKind:    flashKind,
 		BadgeSecs:    int(s.badgeTTL / time.Second),
 		Update:       s.updateView(r),
+		SignIn:       signIn,
 		Data:         data,
 	}
 }

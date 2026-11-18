@@ -27,7 +27,6 @@ import (
 // record shape to discriminate.
 type AdminUser struct {
 	Address     Party  `json:"address"`
-	Description string `json:"description"`
 	Available   int64  `json:"available"`
 	Locked      int64  `json:"locked"`
 	SuspendedAt string `json:"suspended_at,omitempty"`
@@ -61,7 +60,6 @@ func (u AdminUser) Suspended() bool { return u.SuspendedAt != "" }
 type Peer struct {
 	Petname   string `json:"petname"`  // bound here; resolves; "" until bound
 	Nickname  string `json:"nickname"` // self-asserted by the remote; never resolves
-	About     string `json:"about"`    // the peer's sys description; counterparty prose
 	PublicKey string `json:"public_key"`
 	Traded    bool   `json:"traded"`  // counterparty: a transaction here names it; else discovered
 	Actions   int    `json:"actions"` // public actions in its gossiped catalog

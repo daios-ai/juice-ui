@@ -4,6 +4,8 @@ import (
 	"context"
 	"io/fs"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -83,5 +85,27 @@ func TestBadgeAnswer(t *testing.T) {
 	}
 	if got := string(Badge("inbox", "Waiting tasks", 0)); !strings.Contains(got, `hx-swap-oob="outerHTML:.badge-inbox"></span>`) || !strings.Contains(got, `value="inbox:badge:0"`) {
 		t.Errorf("zero badge must render empty: %s", got)
+	}
+}
+
+// Who is an agent here is one reading: a home under $JUICE_HOME/agents named
+// by a login on this kernel; another kernel's home, a file, a bare name or a
+// path is none.
+func TestAgentLogins(t *testing.T) {
+	dir := t.TempDir()
+	for _, d := range []string{"helper@alpha", "assistant@alpha", "bob@beta", "alpha", "@alpha"} {
+		_ = os.MkdirAll(filepath.Join(dir, d), 0o700)
+	}
+	_ = os.WriteFile(filepath.Join(dir, "file@alpha"), nil, 0o600)
+	if got := strings.Join(AgentLogins(dir, "alpha"), ","); got != "assistant@alpha,helper@alpha" {
+		t.Errorf("agents = %s", got)
+	}
+	for login, want := range map[string]bool{"helper@alpha": true, "bob@beta": false, "file@alpha": false, "../helper@alpha": false, "nobody@alpha": false} {
+		if IsAgent(dir, "alpha", login) != want {
+			t.Errorf("IsAgent(%s) != %v", login, want)
+		}
+	}
+	if AgentLogins(filepath.Join(dir, "absent"), "alpha") != nil || IsAgent(dir, "", "helper@") {
+		t.Error("no directory, no kernel: none")
 	}
 }

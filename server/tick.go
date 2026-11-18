@@ -15,7 +15,6 @@ import (
 	"github.com/daios-ai/juice-ui/apps"
 	"github.com/daios-ai/juice-ui/client"
 	"github.com/daios-ai/juice-ui/session"
-	"github.com/gorilla/csrf"
 )
 
 // The heartbeat. A signed-in page makes one request per lane — `watch` every
@@ -74,7 +73,7 @@ func (s *Server) getTick(w http.ResponseWriter, r *http.Request) {
 // request is session.Warning from the limit, and closes when a request — from
 // another tab, or Stay signed in — moved it.
 func (s *Server) watchSession(r *http.Request, key, shown string) (template.HTML, error) {
-	v := idleView{Soon: s.sessions.Idle(r.Context()) >= session.IdleLimit-session.Warning, CSRFField: csrf.TemplateField(r)}
+	v := idleView{Soon: s.sessions.Idle(r.Context()) >= session.IdleLimit-session.Warning, CSRFField: s.csrfField(r)}
 	if v.State() == shown {
 		return "", nil
 	}
@@ -84,8 +83,12 @@ func (s *Server) watchSession(r *http.Request, key, shown string) (template.HTML
 // postSession is Stay signed in: passing the gate recorded the activity, so
 // the answer is the dialog closed.
 func (s *Server) postSession(w http.ResponseWriter, r *http.Request) {
-	_ = s.render.Fragment(w, http.StatusOK, "_idle", idleView{CSRFField: csrf.TemplateField(r)})
+	_ = s.render.Fragment(w, http.StatusOK, "_idle", idleView{CSRFField: s.csrfField(r)})
 }
+
+// badgeCache is the task badge's entry among an account's caches: its count
+// and when it was read.
+const badgeCache = "inbox.badge"
 
 // watchInbox keeps the task badge current: the viewer's waiting tasks and the
 // requesters awaiting a decision, read at most once per badgeTTL.
@@ -113,15 +116,16 @@ func (s *Server) asking(viewer string, reqs []client.Requester) int {
 	return n
 }
 
-// taskBadgeCount is the badge's count, cached in the session for badgeTTL so
-// the kernel is read no more often than the slow lane ticks.
+// taskBadgeCount is the badge's count, cached for the account in use for
+// badgeTTL so the kernel is read no more often than the slow lane ticks.
 func (s *Server) taskBadgeCount(r *http.Request) int {
 	ctx := r.Context()
-	sm := s.sessions.SCS()
-	// Unix nanos, since gob encodes basic types without registration.
-	cachedAtNano := sm.GetInt64(ctx, sessionKeyBadgeAt)
-	count := sm.GetInt(ctx, sessionKeyBadgeCount)
-	if time.Since(time.Unix(0, cachedAtNano)) <= s.badgeTTL {
+	var cachedAt int64
+	var count int
+	if v, ok := s.sessions.AppCache(ctx, badgeCache); ok {
+		_, _ = fmt.Sscanf(v, "%d %d", &count, &cachedAt)
+	}
+	if time.Since(time.Unix(0, cachedAt)) <= s.badgeTTL {
 		return count
 	}
 	_ = s.sessions.Do(ctx, func(tok string) error {
@@ -154,8 +158,7 @@ func (s *Server) taskBadgeCount(r *http.Request) int {
 		}
 		n += s.asking(viewer, requesters)
 		count = n
-		sm.Put(ctx, sessionKeyBadgeCount, n)
-		sm.Put(ctx, sessionKeyBadgeAt, time.Now().UnixNano())
+		s.sessions.UpdateAppCache(ctx, badgeCache, func(string) string { return fmt.Sprintf("%d %d", n, time.Now().UnixNano()) })
 		return nil
 	})
 	return count

@@ -75,6 +75,10 @@ type Options struct {
 	Listen string // the UI's own address
 	Home   string // $JUICE_HOME
 	Log    *slog.Logger
+	// Assistant is handed, once, as a sequence that made a kernel ends, the
+	// password the operator chose for the assistant, which the agents app makes
+	// with it and forgets.
+	Assistant func(password string)
 }
 
 // Step is one entry of a sequence: a page, which asks and changes nothing, or a
@@ -135,6 +139,7 @@ type Installer struct {
 	world string
 	handle,
 	password string // held from its page to the first boot, never rendered
+	assistant string // the assistant's password, held from its page to the end, never rendered
 	phrase,
 	pub string
 	models any // the models chosen, with their keys: held from their page to the first boot
@@ -200,7 +205,7 @@ func (in *Installer) choose(ctx context.Context) ([]Step, error) {
 			return nil, errors.New("couldn't set up account recovery; restart Juice to try again")
 		}
 		in.phrase, in.pub = phrase, pub
-		seq = append(seq, in.worldPage(), in.kernelPage(), in.modelsPage(), in.phrasePage(), in.summaryPage(), in.install())
+		seq = append(seq, in.worldPage(), in.kernelPage(), in.assistantPage(), in.modelsPage(), in.phrasePage(), in.summaryPage(), in.install())
 	}
 	return append(seq, in.launch(ours || creating)), nil
 }
@@ -250,6 +255,23 @@ func (in *Installer) kernelPage() Step {
 			return "The passwords don't match."
 		}
 		in.password = pw
+		return ""
+	})}
+}
+
+// assistantPage takes the password of the assistant, the agent each person
+// meets in their first room: the operator chooses it, as every agent's
+// (requirements §6.1); nothing makes one up.
+func (in *Installer) assistantPage() Step {
+	return Step{ID: "assistant", Title: "Assistant", Installer: true, Page: true, Back: true, Submit: answer(func(f url.Values) string {
+		pw, pw2 := f.Get("password"), f.Get("confirm_password")
+		switch {
+		case len(pw) < 8:
+			return "The password needs at least 8 characters."
+		case pw != pw2:
+			return "The passwords don't match."
+		}
+		in.assistant = pw
 		return ""
 	})}
 }
@@ -340,15 +362,21 @@ func (in *Installer) launch(start bool) Step {
 func (in *Installer) enter(i int) {
 	in.at = i
 	if i >= len(in.seq) {
-		in.password, in.phrase, in.pub, in.models = "", "", "", nil
+		if in.assistant != "" && in.o.Assistant != nil {
+			in.o.Assistant(in.assistant)
+		}
+		in.password, in.assistant, in.phrase, in.pub, in.models = "", "", "", "", nil
 		in.once.Do(func() { close(in.ready) })
 		in.o.Log.Info("installer", "step", "end")
 		return
 	}
 	st := in.seq[i]
 	in.o.Log.Info("installer", "step", st.ID)
-	if st.ID == "kernel" {
+	switch st.ID {
+	case "kernel":
 		in.password = "" // typed again whenever the page is shown again
+	case "assistant":
+		in.assistant = ""
 	}
 	if st.ID == "models" && in.models == nil {
 		in.models, _, _ = in.o.Kernel.Models(in.ctx, nil, nil) // None: nothing chosen, nothing asked

@@ -8,6 +8,8 @@ import (
 	"net/http/cookiejar"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -169,5 +171,34 @@ func TestFormQueryOpensDialogNoJS(t *testing.T) {
 	body2 := getBody(t, cl, srv.URL+"/actions?form=bogus")
 	if strings.Contains(body2, `class="modal-form" open`) {
 		t.Error("unknown ?form value must not open a dialog")
+	}
+}
+
+// Every script request a page makes names the account it was rendered for
+// (requirements §5): htmx's through the one configRequest handler, and every
+// native request, GET or POST, by its own header, so a page opened before a
+// switch neither reads nor acts as the account switched to.
+func TestEveryScriptRequestNamesItsAccount(t *testing.T) {
+	for _, f := range []string{"static/app.js", "../wallet/wallet.mjs"} {
+		src, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		js := string(src)
+		if f == "static/app.js" && !strings.Contains(js, `e.detail.headers["X-Juice-Account"] = account`) {
+			t.Error("htmx's requests must carry the page's account")
+		}
+		if f == "static/app.js" && !strings.Contains(js, `r.status === 412 ? (location.reload(), null)`) {
+			t.Error("the catalog's request reloads a page of another account on 412")
+		}
+		for _, loc := range regexp.MustCompile(`\bfetch(Fn)?\(`).FindAllStringIndex(js, -1) {
+			call := js[loc[0]:] // the call, to the end of its statement
+			if end := strings.Index(call, ";\n"); end > 0 {
+				call = call[:end]
+			}
+			if !strings.Contains(call, "X-Juice-Account") {
+				t.Errorf("%s: a script request names no account: %s", f, call)
+			}
+		}
 	}
 }

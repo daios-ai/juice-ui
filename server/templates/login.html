@@ -18,14 +18,7 @@
 
     <form class="auth-panel stack" method="post" action="/login" data-panel="signin"{{if ne $tab "signin"}} hidden{{end}}>
       {{.CSRFField}}
-      <div class="field">
-        <label for="handle">Handle</label>
-        <input id="handle" name="handle" type="text" placeholder="you" autocomplete="username" required>
-      </div>
-      <div class="field">
-        <label for="password">Password</label>
-        <input id="password" name="password" type="password" autocomplete="current-password" required>
-      </div>
+      {{template "_signin_fields" ""}}
       <button class="btn-primary" type="submit">Sign in</button>
       <p><a class="btn" href="/recover">Forgot password?</a></p>
     </form>

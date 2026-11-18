@@ -4,23 +4,20 @@
   <h1>Agents</h1>
 </div>
 
-<p><a class="btn" href="/agents?form=agent-create" data-modal="form-agent-create">+ new agent</a></p>
+{{/* The fleet's control pane (requirements §6.1): a record list of the
+     agents, those that need the operator first, each with its everyday
+     commands, so an agent is checked, started, funded and signed in to without
+     opening its page. */}}
+<p><a class="btn" href="/agents?form=agent-create" data-modal="form-agent-create"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#plus"/></svg>New agent</a></p>
 
 {{if $d.Agents}}
-<div class="action-list">
-  {{range $d.Agents}}
-  <article class="action-row">
-    <span class="media tile">{{cardArt .Handle .Handle "agent"}}</span>
-    <div class="action-body">
-      <div class="action-line">
-        <a class="action-title ref mono" href="/agents/{{.Handle}}"><span class="owner">{{.Handle}}</span></a>
-        {{with .Short}}<span class="pill status-danger">{{.}}</span>{{end}}
-      </div>
-      {{template "_agent_status" .}}
-    </div>
-  </article>
-  {{end}}
+<div class="table-scroll">
+<table class="records">
+  <thead><tr><th>Agent</th><th class="money">Balance</th><th>Active</th><th></th></tr></thead>
+  <tbody>{{range $d.Agents}}{{template "_agent_row" .}}{{end}}</tbody>
+</table>
 </div>
+{{range $d.Agents}}{{template "_agent_dialogs" .}}{{end}}
 {{else}}
 <p class="muted">No agents yet.</p>
 {{end}}
@@ -29,7 +26,7 @@
   <div class="modal-head"><h2>New agent</h2><a class="modal-close" href="/agents" data-modal-close aria-label="Close">×</a></div>
   <div class="modal-body">
     {{with $d.Error}}{{template "_error" .}}{{end}}
-    <form class="stack" method="post" action="/agents">
+    <form class="stack" method="post" action="/agents" data-confirm-password>
       {{.CSRFField}}
       <div class="field">
         <label for="agent-handle">Handle</label>
@@ -37,8 +34,12 @@
         <input id="agent-handle" type="text" name="handle" placeholder="research" value="{{$d.Handle}}" required>
       </div>
       <div class="field">
-        <label for="agent-password">Kernel password</label>
-        <input id="agent-password" type="password" name="password" autocomplete="new-password" required>
+        <label for="agent-password">Password</label>
+        <input id="agent-password" type="password" name="password" autocomplete="new-password" minlength="8" required>
+      </div>
+      <div class="field">
+        <label for="agent-password2">Confirm password</label>
+        <input id="agent-password2" type="password" name="confirm_password" autocomplete="new-password" minlength="8" required>
       </div>
       <button class="btn-primary" type="submit">Create</button>
     </form>

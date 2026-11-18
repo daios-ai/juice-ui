@@ -160,3 +160,21 @@ func (c *Client) WithLogin(ctx context.Context, dir, login string, fn func(token
 	}
 	return fn(cred["token"])
 }
+
+// RecordLogin records the session of login the way `juice auth login` does:
+// the kernel in dir/config.json (RecordKernel) and the session in
+// dir/credentials/<login>.json with its principal. A session the kernel
+// answers for another account is refused, and nothing is written.
+func (c *Client) RecordLogin(ctx context.Context, dir, login string, t Tokens) error {
+	me, err := c.Me(ctx, t.AccessToken)
+	if err != nil {
+		return err
+	}
+	if me.Address.Address != login {
+		return fmt.Errorf("signed in as %s, not %s", me.Address.Address, login)
+	}
+	if err := c.RecordKernel(ctx, dir); err != nil {
+		return err
+	}
+	return WriteCredential(filepath.Join(dir, "credentials", login+".json"), t, me.ID)
+}

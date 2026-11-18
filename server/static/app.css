@@ -63,7 +63,7 @@ a:hover { text-decoration: underline; text-underline-offset: 2px; }
   background: var(--surface); border-right: 1px solid var(--border);
   padding: var(--space-3) var(--space-2); overflow: hidden;
 }
-.sidebar-top { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); padding: 0 0 var(--space-1) var(--space-1); }
+.sidebar-top { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); padding: 0 0 var(--space-1) var(--space-1); margin-bottom: auto; } /* the avatar stays at the foot when there is no rail (an account without rooms) */
 .brand { display: flex; align-items: center; gap: var(--space-2); font-weight: 700; font-size: var(--font-size-lg); letter-spacing: .04em; color: var(--text); white-space: nowrap; }
 .brand:hover { text-decoration: none; }
 .brand-logo { height: 1.5rem; width: auto; display: block; flex: 0 0 auto; }
@@ -106,6 +106,7 @@ a:hover { text-decoration: underline; text-underline-offset: 2px; }
 .profile-trigger:hover { background: var(--surface-2); }
 .profile-trigger .handle { overflow: hidden; text-overflow: ellipsis; }
 .menu-item .badge { position: static; margin-left: auto; }
+.btn .badge { position: static; } /* a count on a button, in its flow */
 
 /* The update notice (requirements §6.1): the superuser's one standing notice,
    above the avatar while a newer release is out. Its wrapper only holds the
@@ -153,8 +154,6 @@ a:hover { text-decoration: underline; text-underline-offset: 2px; }
 .price { color: var(--text); font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-weight: 600; }
 .price .free { color: var(--text-muted); font-weight: 500; }
 
-/* The kernel strip (_kernel_strip) — icon + number pairs in a horizontal row */
-.stat-strip { display: flex; gap: var(--space-4); flex-wrap: wrap; align-items: center; justify-content: center; color: var(--text-muted); font-size: var(--font-size-sm); }
 
 /* An action's figures (_stats, grammar §5.5) — on its row, its page and its
    panel: one line, a cell each — an icon and a bar, or a number — the record
@@ -178,7 +177,7 @@ a:hover { text-decoration: underline; text-underline-offset: 2px; }
 
 /* Money columns are right-aligned — header included, so the title sits over its
    values. Any money <th> carries class="money". */
-td.money, th.money { text-align: right; }
+td.money, th.money, td.num, th.num { text-align: right; }
 
 /* Generic floating menu panel — pair with <details><summary> or [data-menu] button */
 .menu {
@@ -423,7 +422,6 @@ h3 { margin: var(--space-5) 0 var(--space-1); font-size: var(--font-size-lg); }
    The peer roster and the agents page use the same row, text only. */
 .action-list { display: flex; flex-direction: column; gap: var(--space-4); container: action-list / inline-size; }
 .action-row { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: start; column-gap: var(--space-4); border-radius: var(--radius); }
-.action-row.inactive { opacity: .55; }
 .action-row:focus-visible { outline: 2px solid var(--focus); outline-offset: 4px; }
 .action-body { min-width: 0; }
 .action-row > .action-stats { grid-column: 2; margin-top: var(--space-2); }
@@ -435,10 +433,7 @@ h3 { margin: var(--space-5) 0 var(--space-1); font-size: var(--font-size-lg); }
 }
 .action-name { margin: 0; }
 .action-name .chips { margin-left: var(--space-2); }
-.action-line { display: flex; align-items: baseline; gap: var(--space-2); }
-.action-line .chip { flex: 0 0 auto; align-self: center; }
 .action-title { font-weight: 600; color: var(--text); font-size: var(--font-size-lg); overflow-wrap: anywhere; }
-.action-line .btn { margin-left: auto; flex: 0 0 auto; }
 .action-ref { margin: 0; font-size: var(--font-size-xs); color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .action-desc { margin: 0; font-size: var(--font-size-sm); color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .action-desc:empty { display: none; }
@@ -547,6 +542,7 @@ button { font-family: inherit; cursor: pointer; }
 /* Inside a row or a line of text — a row's menu trigger, the copy control — an
    icon button is borderless and muted (with the composer's, below) and small. */
 .btn-icon.inline { flex: none; width: var(--space-5); height: var(--space-5); vertical-align: middle; }
+.btn-icon.btn-danger { background: var(--danger); border-color: var(--danger); color: var(--danger-contrast); } /* the destructive tier in its icon form (an agent's Stop) */
 .btn-icon.inline .ico { width: var(--icon-sm); height: var(--icon-sm); }
 
 /* Forms */
@@ -712,6 +708,24 @@ th { color: var(--text-muted); font-weight: 600; }
 /* A row's actions: its last cell, ending at the table's right edge (§5.5). */
 td.row-actions { text-align: right; padding-inline-end: 0; }
 td.row-actions .cluster { justify-content: flex-end; }
+/* table.records — a list of records of one kind (users, agents, kernels): a
+   table on a wide screen; on a narrow one each row is stacked, its first cell
+   (the record's name and state) on top, each labelled cell a line of its
+   label (data-label, its column's header) and its value, an empty one no
+   line, and its commands last. The header row is the labels', hidden from
+   sight and kept for assistive technology (.sr-only's declarations); the name
+   wraps, so a long handle never scrolls the record sideways. */
+@media (max-width: 720px) {
+  table.records thead { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+  table.records td:first-child { overflow-wrap: anywhere; }
+  table.records, table.records tbody, table.records tr, table.records td { display: block; }
+  table.records tr { padding: var(--space-2) 0; border-bottom: 1px solid var(--border); }
+  table.records td { border-bottom: none; padding: var(--space-1) 0; }
+  table.records td[data-label] { display: flex; justify-content: space-between; gap: var(--space-3); }
+  table.records td[data-label]::before { content: attr(data-label); color: var(--text-muted); font-family: var(--font-ui); }
+  table.records td[data-label]:empty { display: none; }
+  table.records td.row-actions .cluster { justify-content: flex-start; }
+}
 /* Collapsible card (details.card): the summary is a flex row — the label sits by
    the disclosure marker on the left, its action .cluster is pushed to the far right
    (clear of the marker). Shared by the peers roster and the user's connectors. */

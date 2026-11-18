@@ -26,6 +26,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/chromedp/cdproto/page"
 	"github.com/chromedp/chromedp"
 	"github.com/daios-ai/juice-ui/kernel"
 )
@@ -102,6 +103,8 @@ func TestStories(t *testing.T) {
 		submit(t, sys, "form.install-step", map[string]string{"world": "play"})
 		waitText(t, sys, "Kernel name")
 		submit(t, sys, "form.install-step", map[string]string{"handle": "alpha", "password": password, "confirm_password": password})
+		waitText(t, sys, "Assistant password")
+		submit(t, sys, "form.install-step", map[string]string{"password": password, "confirm_password": password})
 		waitText(t, sys, "Chat model")
 		chooseModel(t, sys, "chat", "fake-chat")
 		chooseModel(t, sys, "embed", "fake-embed")
@@ -111,6 +114,7 @@ func TestStories(t *testing.T) {
 		waitText(t, sys, "recovery phrase")
 		submit(t, sys, "form.install-step", map[string]string{"understand": "on"})
 		waitText(t, sys, "Kernel home")
+		waitText(t, sys, "assistant@alpha")
 		submit(t, sys, "form.install-step", nil)
 		waitTextFor(t, sys, "Sign in", 3*time.Minute)
 	})
@@ -143,13 +147,14 @@ func TestStories(t *testing.T) {
 	})
 
 	step(t, "the operator funds the assistant in two clicks", func(t *testing.T) {
-		visit(t, sys, "/agents/assistant")
-		waitText(t, sys, "no funds")
-		click(t, sys, `a[data-modal="form-fund"]`)
-		fill(t, sys, "#fund-amount", "10")
-		click(t, sys, `#form-fund button.btn-primary`)
-		click(t, sys, `#form-fund-review button.btn-money`)
-		wait(t, sys, `!document.body.innerText.includes("no funds") && !document.querySelector("#form-fund-review")`)
+		visit(t, sys, "/agents")
+		wait(t, sys, `document.querySelector('#agent-state-assistant .pill')?.textContent === "no funds"`)
+		click(t, sys, `a[data-modal="form-fund-assistant"]`)
+		fill(t, sys, "#fund-amount-assistant", "10")
+		click(t, sys, `#form-fund-assistant button.btn-primary`)
+		click(t, sys, `#form-fund-review-assistant button.btn-money`)
+		waitURL(t, sys, "/agents")
+		wait(t, sys, `document.querySelector('#agent-state-assistant .pill')?.textContent === "running" && !document.querySelector("#form-fund-review-assistant")`)
 	})
 
 	step(t, "a post is answered by the assistant", func(t *testing.T) {
@@ -218,6 +223,92 @@ func TestStories(t *testing.T) {
 	step(t, "a post's charge is in the transactions", func(t *testing.T) {
 		visit(t, ann, "/transactions")
 		waitText(t, ann, "msg/post")
+	})
+
+	step(t, "the operator makes an agent, and starting it asks for its password", func(t *testing.T) {
+		visit(t, sys, "/agents?form=agent-create")
+		submit(t, sys, `form[action="/agents"]`, map[string]string{"handle": "helper", "password": password, "confirm_password": password})
+		waitURL(t, sys, "/agents") // New agent lands on its Fund, over the list
+		wait(t, sys, `document.querySelector('#form-fund-helper').open`)
+		visit(t, sys, "/agents") // the fleet's control pane: an agent's commands are there
+		wait(t, sys, `!!document.querySelector('#agent-commands-helper form[action$="/stop"]')`)
+		other, cancel := chromedp.NewContext(sys) // a second tab on the list, kept by the heartbeat
+		defer cancel()
+		if err := chromedp.Run(other); err != nil {
+			t.Fatal(err)
+		}
+		visit(t, other, "/agents")
+		wait(t, other, `!!document.querySelector('#agent-commands-helper form[action$="/stop"]')`)
+		run(t, sys, "front", page.BringToFront())
+		submit(t, sys, `#agent-commands-helper form[action$="/stop"]`, nil)
+		waitURL(t, sys, "/agents")
+		wait(t, sys, `document.querySelector('#agent-state-helper .pill')?.textContent === "stopped"`)
+		run(t, other, "front", page.BringToFront())
+		waitFor(t, other, `document.querySelector('#agent-state-helper .pill')?.textContent === "stopped" && !!document.querySelector('#agent-commands-helper a[aria-label="Start helper"]')`, 30*time.Second)
+		run(t, sys, "front", page.BringToFront())
+		submit(t, sys, `#form-start-helper form`, map[string]string{"password": "wrong-password"})
+		waitText(t, sys, "Password is incorrect.")
+		wait(t, sys, `document.querySelector('#form-start-helper').open && !!document.querySelector('#agent-state-helper')`) // refused over the list
+		submit(t, sys, `#form-start-helper form`, map[string]string{"password": password})
+		waitURL(t, sys, "/agents")
+		wait(t, sys, `!!document.querySelector('#agent-commands-helper form[action$="/stop"]')`)
+		visit(t, sys, "/agents/helper") // its page: its facts and Settings, none of its commands
+		wait(t, sys, `document.querySelector('h1 .ref')?.textContent === "helper" && document.body.innerText.includes("Settings") && !document.querySelector('form[action$="/stop"]')`)
+	})
+
+	step(t, "a person asks an agent, and the operator decides as it", func(t *testing.T) {
+		visit(t, ann, "/actions?ref=sys@alpha/message")
+		submit(t, ann, `form[action$="/run"]`, map[string]string{"f_/to": "helper@alpha", "f_/message": "may I?"})
+		waitText(t, ann, "task_id")
+		visit(t, sys, "/agents")
+		wait(t, sys, `document.querySelector('#agent-commands-helper a[data-fill="helper"] .badge')?.textContent === "1"`)
+		click(t, sys, `#agent-commands-helper a[data-fill="helper"]`) // the layout's Sign in dialog, its handle filled in
+		wait(t, sys, `document.querySelector('#signin').open && document.querySelector('#signin [name=handle]').value === "helper" && document.activeElement === document.querySelector('#signin [name=password]')`)
+		fill(t, sys, `#signin [name=password]`, "wrong-password")
+		click(t, sys, `#signin button[type=submit]`) // by htmx: the refusal answers the dialog open, over the list
+		wait(t, sys, `document.querySelector('#signin').open && document.querySelector('#signin').innerText.includes("Invalid handle or password.") && document.querySelector('#signin [name=handle]').value === "helper"`)
+		wait(t, sys, `location.pathname === "/agents" && !!document.querySelector('#agent-state-helper')`)
+		submit(t, sys, `#signin form`, map[string]string{"password": password})
+		waitURL(t, sys, "/browse")
+		wait(t, sys, `document.querySelector('meta[name=account]').content === "helper@alpha" && !document.querySelector('.rail') && !document.querySelector('a[href="/agents"]')`)
+		visit(t, sys, "/inbox")
+		waitText(t, sys, "ann@alpha")
+		submit(t, sys, `form[action^="/inbox/requesters/"][action$="/approve"]`, nil)
+		waitText(t, sys, "Approved.")
+		submit(t, sys, `form[action="/switch"]:has(input[value="sys@alpha"])`, nil)
+		wait(t, sys, `document.querySelector('meta[name=account]')?.content === "sys@alpha"`)
+		visit(t, sys, "/agents")
+		wait(t, sys, `!!document.querySelector('#agent-commands-helper') && !document.querySelector('#agent-commands-helper [aria-label="Waiting"]')`)
+		click(t, sys, `[data-menu="profile-popup"]`)                              // the avatar menu's Sign in opens the same dialog, empty
+		wait(t, sys, `document.querySelector('#profile-popup').style.top !== ""`) // placed on the next frame
+		click(t, sys, `#profile-popup a[data-modal="signin"]`)
+		wait(t, sys, `document.querySelector('#signin').open && document.querySelector('#signin [name=handle]').value === ""`)
+		for _, pg := range []string{"/admin", "/admin/peers"} { // users and kernels: record lists, as the agents
+			visit(t, sys, pg)
+			wait(t, sys, `!!document.querySelector('table.records tbody tr td[data-label]')`)
+		}
+		visit(t, sys, "/login") // the entry screen is for a signed-out visitor alone
+		wait(t, sys, `location.pathname !== "/login" && !document.querySelector('.auth')`)
+	})
+
+	step(t, "a page open as one account does nothing as another, and reloads itself", func(t *testing.T) {
+		other, cancel := chromedp.NewContext(sys) // a second tab of the same person
+		defer cancel()
+		if err := chromedp.Run(other); err != nil {
+			t.Fatal(err)
+		}
+		visit(t, other, "/wallet")
+		wait(t, other, `document.querySelector('meta[name=account]').content === "sys@alpha"`)
+		run(t, sys, "front", page.BringToFront())
+		visit(t, sys, "/wallet")
+		submit(t, sys, `form[action="/switch"]:has(input[value="helper@alpha"])`, nil)
+		wait(t, sys, `document.querySelector('meta[name=account]')?.content === "helper@alpha"`)
+		run(t, other, "front", page.BringToFront())
+		waitFor(t, other, `document.querySelector('meta[name=account]')?.content === "helper@alpha" && location.pathname === "/browse"`, 30*time.Second)
+		run(t, sys, "front", page.BringToFront())
+		visit(t, sys, "/wallet")
+		submit(t, sys, `form[action="/switch"]:has(input[value="sys@alpha"])`, nil)
+		wait(t, sys, `document.querySelector('meta[name=account]')?.content === "sys@alpha"`)
 	})
 }
 

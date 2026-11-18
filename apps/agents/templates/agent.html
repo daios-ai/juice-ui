@@ -1,127 +1,84 @@
 {{define "content"}}
 {{$d := .Data}}
 {{$h := $d.Handle}}
-<nav class="crumb"><a href="/agents">← agents</a></nav>
+<nav class="crumb"><a href="/agents">← Agents</a></nav>
+{{/* An agent's page: its name and state, the facts its row in the fleet's
+     list leaves out, and its settings. Its commands are the list's (one
+     control, one place). An agent IS a user (ecosystem-standard §7): what its
+     program cannot do — approve requesters, accept invitations, connect
+     accounts, see its records, send money back — the operator does as it, by
+     signing in to it (requirements §5); nothing of a user's pages is drawn
+     here twice. */}}
 <div class="page-head">
-  <h1><span class="ref mono"><span class="owner">{{$h}}</span></span></h1>
+  <h1><span class="ref mono">{{$h}}</span> {{template "_agent_pill" $d}}</h1>
 </div>
+<dl class="kv">
+  {{with $d.Account}}<dt>Balance</dt><dd class="money">{{money .Available}}</dd>{{with .Locked}}<dt>Parked</dt><dd class="money">{{money .}}</dd>{{end}}{{end}}
+  {{with $d.Ready.Reason.Address}}<dt>Model</dt><dd>{{template "_name" (plain (brief $d.Ready.Reason))}}{{with $d.Ready.Call}} at <span class="money">{{money .}}</span> a call{{end}}</dd>{{end}}
+  {{with $d.Ready.Budget}}<dt>Budget</dt><dd><span class="money">{{money .}}</span> per job</dd>{{end}}
+  <dt>Active</dt><dd>{{with $d.Self.LastActive}}{{relTime .}}{{else}}never{{end}}</dd>
+  {{if not $d.Running}}{{with $d.LastLine}}<dt>Exit</dt><dd class="mono small">{{.}}</dd>{{end}}{{end}}
+</dl>
 
-<h2>Status</h2>
-{{template "_agent_status" $d}}
-
-{{/* An agent IS a user: it holds its own principal on this kernel, funded like
-     anybody's, and spends it (ecosystem-standard §6). The card is the kernel's
-     row for that handle's address, read with the viewer's own token; a home
-     with no principal says so rather than showing a zero. The kernel filters
-     transactions by process, not by party, so its history is the transactions
-     page, not a scan of the whole ledger here. Fund moves the operator's money
-     to it by sys/transfer, the recipient never typed (§6.5); Model call and
-     Budget per job say whether one job fits, at the model's live price. */}}
-<h2>Account</h2>
-{{if $d.Account}}
-<div class="card">
-  <dl class="locked-args">
-    <dt>Address</dt><dd>{{template "_name" (name $d.Account.Address)}}</dd>
-    <dt>Available</dt><dd class="money">{{money $d.Account.Available}}</dd>
-    <dt>Parked</dt><dd class="money">{{money $d.Account.Locked}}</dd>
-    {{if $d.Ready.Call}}<dt>Model call</dt><dd class="money">{{money $d.Ready.Call}}</dd>
-    <dt>Budget per job</dt><dd class="money">{{money $d.Ready.Budget}}</dd>{{end}}
-    <dt>State</dt><dd>{{if $d.Account.Suspended}}<span class="pill status-danger">suspended</span>{{else if $d.Ready.Short}}<span class="pill status-danger">{{$d.Ready.Short}}</span>{{else}}<span class="pill status-credited">active</span>{{end}}</dd>
-  </dl>
-  <div class="cluster"><a class="btn" href="/agents/{{$h}}?form=fund" data-modal="form-fund">Fund</a></div>
+{{/* Its settings, as the Settings page's rows: each a name, what it holds,
+     and the one command that changes it; the destructive one last. */}}
+<h2>Settings</h2>
+<div class="you-list">
+  <div class="you-row"><span>instructions</span><span class="detail">{{or $d.Instructions "empty"}}</span><a class="btn" href="/agents/{{$h}}?form=agent" data-modal="form-agent">Edit</a></div>
+  <div class="you-row"><span>configuration</span><span class="detail">model · budget</span><a class="btn" href="/agents/{{$h}}?form=config" data-modal="form-config">Edit</a></div>
+  {{if $d.Held}}<div class="you-row"><span>password</span><span class="detail"></span><a class="btn" href="/agents/{{$h}}?form=password" data-modal="form-password">Set password</a></div>{{end}}
+  {{if not $d.Running}}<div class="you-row"><span>delete</span><span class="detail">{{with $d.Account}}leaves {{money .Available}} in its account{{end}}</span>
+    <form method="post" action="/agents/{{$h}}/delete" data-confirm="Delete {{$h}}{{with $d.Account}}, leaving {{moneyExact .Available}} in its account{{end}}?">{{.CSRFField}}<button class="btn-danger" type="submit">Delete agent</button></form></div>{{end}}
 </div>
-<p><a class="muted small" href="/transactions">all transactions →</a></p>
-{{else}}
-<p class="muted">No account on this kernel yet.</p>
-{{end}}
-
-<h2>Agent file</h2>
-<div class="cluster"><a class="btn" href="/agents/{{$h}}?form=agent" data-modal="form-agent">Edit</a></div>
-{{if $d.Agent}}<pre class="json">{{$d.Agent}}</pre>{{else}}<p class="muted">Empty.</p>{{end}}
 
 {{/* config.json as the form of the daemon's own schema of it, as the kernel's
      configuration page edits its file (§6.1, §6.6): a save writes the file,
      which the daemon reads at its next start. */}}
-<h2>Config</h2>
-<form class="card stack" method="post" action="/agents/{{$h}}/config" data-json data-to-json="/agents/{{$h}}/config/json" data-to-form="/agents/{{$h}}/config/form">
-  {{.CSRFField}}
-  <input type="hidden" name="version" value="{{$d.Version}}">
-  {{if not $d.Config.UseRawFallback}}{{template "_json_switch"}}{{end}}
-  {{template "_form_fields" $d.Config}}
-  <div class="cluster"><button class="btn-primary" type="submit">Save</button></div>
-</form>
-
-{{if not $d.Running}}
-<h2>Danger</h2>
-<div class="cluster">
-  <form method="post" action="/agents/{{$h}}/delete" data-confirm="Delete {{$h}}?">{{.CSRFField}}<button class="btn-danger" type="submit">Delete agent</button></form>
-</div>
-{{end}}
-
-<dialog id="form-start" class="modal-form"{{if eq $d.OpenForm "start"}} open{{end}} aria-label="Start">
-  <div class="modal-head"><h2>Start {{$h}}</h2><a class="modal-close" href="/agents/{{$h}}" data-modal-close aria-label="Close">×</a></div>
+<dialog id="form-config" class="modal-form"{{if eq $d.OpenForm "config"}} open{{end}} aria-label="Configuration">
+  <div class="modal-head"><h2>Configuration</h2><a class="modal-close" href="/agents/{{$h}}" data-modal-close aria-label="Close">×</a></div>
   <div class="modal-body">
-    {{with $d.Error}}{{template "_error" .}}{{end}}
-    <form class="stack" method="post" action="/agents/{{$h}}/start">
+    <form class="stack" method="post" action="/agents/{{$h}}/config" data-json data-to-json="/agents/{{$h}}/config/json" data-to-form="/agents/{{$h}}/config/form">
       {{.CSRFField}}
-      <div class="field">
-        <label for="start-password">Kernel password</label>
-        <input id="start-password" type="password" name="password" autocomplete="current-password" required>
-      </div>
-      <button class="btn-primary" type="submit">Start</button>
+      <input type="hidden" name="version" value="{{$d.Version}}">
+      {{if not $d.Config.UseRawFallback}}{{template "_json_switch"}}{{end}}
+      {{template "_form_fields" $d.Config}}
+      <button class="btn-primary" type="submit">Save</button>
     </form>
   </div>
 </dialog>
 
-{{/* ---- Fund: the amount, then the confirm naming what the operator pays,
-     the wallet's Withdraw pair in shape. The review carries the transfer's
-     quote and the key it is sent under, so it moves money once. ---- */}}
-<dialog id="form-fund" class="modal-form"{{if eq $d.OpenForm "fund"}} open{{end}} aria-label="Fund">
-  <div class="modal-head"><h2>Fund {{$h}}</h2><a class="modal-close" href="/agents/{{$h}}" data-modal-close aria-label="Close">×</a></div>
+{{if $d.Held}}
+<dialog id="form-password" class="modal-form"{{if eq $d.OpenForm "password"}} open{{end}} aria-label="Set password">
+  <div class="modal-head"><h2>Set password</h2><a class="modal-close" href="/agents/{{$h}}" data-modal-close aria-label="Close">×</a></div>
   <div class="modal-body">
-    {{with $d.Fund.Error}}{{template "_error" .}}{{end}}
-    <form class="stack" method="post" action="/agents/{{$h}}/fund/review">
+    {{if eq $d.OpenForm "password"}}{{with $d.Error}}{{template "_error" .}}{{end}}{{end}}
+    <form class="stack" method="post" action="/agents/{{$h}}/password" data-confirm-password>
       {{.CSRFField}}
       <div class="field">
-        <label for="fund-amount">Amount</label>
-        <input id="fund-amount" name="amount" type="number" min="0" step="{{amountStep}}" class="input-sm" value="{{$d.Fund.Typed}}" required>
+        <label for="set-password">Password</label>
+        <input id="set-password" type="password" name="password" autocomplete="new-password" minlength="8" required>
       </div>
-      <div class="cluster">
-        <button class="btn-primary" type="submit">Review</button>
-        <button type="button" class="btn" data-modal-close>Cancel</button>
+      <div class="field">
+        <label for="set-password2">Confirm password</label>
+        <input id="set-password2" type="password" name="confirm_password" autocomplete="new-password" minlength="8" required>
       </div>
-    </form>
-  </div>
-</dialog>
-
-{{if eq $d.OpenForm "fund-review"}}
-<dialog id="form-fund-review" class="modal-form" open aria-label="Fund">
-  <div class="modal-head"><h2>Fund {{$h}}</h2><a class="modal-close" href="/agents/{{$h}}" data-modal-close aria-label="Close">×</a></div>
-  <div class="modal-body">
-    {{with $d.Fund.Error}}{{template "_error" .}}{{end}}
-    <form class="stack" method="post" action="/agents/{{$h}}/fund">
-      {{.CSRFField}}
-      <input type="hidden" name="amount" value="{{$d.Fund.Typed}}">
-      <input type="hidden" name="quote" value="{{$d.Fund.Quote}}">
-      <input type="hidden" name="key" value="{{$d.Fund.Key}}">
-      <input type="hidden" name="price" value="{{$d.Fund.Price}}">
-      <dl class="kv"><dt>To {{$h}}</dt><dd class="money">{{moneyExact $d.Fund.Amount}}</dd><dt>Transfer</dt><dd class="money">{{moneyExact $d.Fund.Price}}</dd></dl>
-      <div class="cluster">
-        <button class="btn-money" type="submit">Fund ({{moneyExact $d.Fund.Total}})</button>
-        <button type="button" class="btn" data-modal-close>Cancel</button>
-      </div>
+      <button class="btn-primary" type="submit">Set password</button>
     </form>
   </div>
 </dialog>
 {{end}}
 
-{{/* ---- edit modal (agent.md) ---- */}}
-<dialog id="form-agent" class="modal-form"{{if eq $d.OpenForm "agent"}} open{{end}} aria-label="Edit agent.md">
-  <div class="modal-head"><h2>Edit agent.md</h2><a class="modal-close" href="/agents/{{$h}}" data-modal-close aria-label="Close">×</a></div>
+
+{{/* ---- Instructions: agent.md, the agent's standing instructions ---- */}}
+<dialog id="form-agent" class="modal-form"{{if eq $d.OpenForm "agent"}} open{{end}} aria-label="Edit instructions">
+  <div class="modal-head"><h2>Edit instructions</h2><a class="modal-close" href="/agents/{{$h}}" data-modal-close aria-label="Close">×</a></div>
   <div class="modal-body">
     <form class="stack" method="post" action="/agents/{{$h}}/files/agent.md">
       {{.CSRFField}}
-      <div class="field"><textarea name="content" rows="1" aria-label="agent.md">{{$d.Agent}}</textarea></div>
+      <div class="field">
+        <label for="agent-md">Instructions</label>
+        <textarea id="agent-md" name="content" rows="12">{{$d.Agent}}</textarea>
+      </div>
       <button class="btn-primary" type="submit">Save</button>
     </form>
   </div>

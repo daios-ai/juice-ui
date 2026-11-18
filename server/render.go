@@ -44,7 +44,8 @@ type Page struct {
 	Sidebar      string        // "collapsed" | "" (expanded); stamped to avoid flash
 	Commands     []Command     // the registry: the avatar menu's destinations and the launcher's entries
 	Rail         template.HTML // the conversations rail, the sidebar's content
-	Me           string        // signed-in address for the nav, or "" when anonymous
+	Me           string        // the account in use, or "" when anonymous
+	Accounts     []string      // every account the session holds, as signed in (the avatar menu)
 	KernelHandle string        // this kernel's own name (from /health), or "" if unknown
 	KernelKey    string        // this kernel's public key, shown shortened with its copy for pre-auth verification (login only)
 	KernelNet    string        // the network this kernel serves, named on the login page
@@ -61,6 +62,7 @@ type Page struct {
 	Path         string        // current path, for links that must return to it
 	DrawerOpen   bool          // ?drawer=open: the narrow screen's drawer, open (no-JS path)
 	Update       *updateView   // the superuser's update notice; nil for anyone else
+	SignIn       signInView    // the Sign in dialog of a signed-in page
 	Data         any           // page-specific view model
 }
 
@@ -274,6 +276,7 @@ func NewRenderer(identity *KernelIdentity, appTemplates ...fs.FS) (*Renderer, er
 		"endOf":          endOf,
 		"obligation":     obligation,
 		"declineForm":    declineForm,
+		"switchTo":       switchTo,
 		"price":          priceOf,
 		"shortTime":      shortTime,
 		"shortDate":      shortDate,
@@ -696,6 +699,24 @@ type taskDecline struct {
 	CSRFField template.HTML
 }
 
+// switchView is the one control that puts an account the session holds in use
+// (_switch). Held says whether the session holds address; one it does not is
+// signed in through the Sign in dialog (_signin).
+type switchView struct {
+	Address   string
+	Held      bool
+	Label     string
+	Class     string // the button's class: a menu row, or a button on a page
+	Count     int    // a count on the button: what waits on that account
+	CSRFField template.HTML
+}
+
+// switchTo builds a switch control for address among the session's accounts
+// (template helper).
+func switchTo(accounts []string, address, label, class string, count int, csrf template.HTML) switchView {
+	return switchView{Address: address, Held: slices.Contains(accounts, address), Label: label, Class: class, Count: count, CSRFField: csrf}
+}
+
 // declineForm builds that pairing (template helper).
 func declineForm(csrf template.HTML, id, verb string) taskDecline {
 	return taskDecline{ID: id, Verb: verb, CSRFField: csrf}
@@ -996,6 +1017,18 @@ type progressView struct{ ID, Label string }
 // session.Warning away, and the watch input naming what it shows.
 type idleView struct {
 	Soon      bool
+	CSRFField template.HTML
+}
+
+// signInView is the Sign in dialog of a signed-in page (_signin): it signs the
+// session in to another account of this kernel (requirements §5). Open and
+// Handle come from ?form=signin&handle= (the path without script) or from a
+// refusal, which carries its reason; Path is where Close returns.
+type signInView struct {
+	Open      bool
+	Handle    string
+	Error     string
+	Path      string
 	CSRFField template.HTML
 }
 

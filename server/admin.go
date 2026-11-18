@@ -21,7 +21,6 @@ import (
 	"github.com/daios-ai/juice-ui/client"
 	"github.com/daios-ai/juice-ui/models"
 	"github.com/daios-ai/juice-ui/wallet"
-	"github.com/gorilla/csrf"
 	"golang.org/x/mod/semver"
 )
 
@@ -81,14 +80,12 @@ const (
 // names (kernelParty): a peer by its petname, else ~nickname, else its key, and
 // this kernel by its own handle — never stored as a petname, which is a name
 // bound here for another kernel, nor as a nickname, which is a peer's
-// unverified claim. Strip is the
-// peer's facts in the stat strip's grammar; this kernel's row has none, since
-// the roster states nothing about it.
+// unverified claim. This kernel's row states no catalog and no contact,
+// since the roster states nothing about it.
 type kernelRow struct {
 	client.Peer
 	Class  string
 	Kernel client.Party
-	Strip  *KernelStrip
 }
 
 // kernelParty is a kernel as a party, so _name draws it as it draws every
@@ -100,20 +97,6 @@ func kernelParty(petname, nickname, key string) client.Party {
 		address = key
 	}
 	return client.Party{Address: address, Principal: key, Nickname: nickname}
-}
-
-// KernelStrip is a peer row's facts as a stat strip (§5.5): fixed slots in a
-// fixed order so rows compare down the column — the catalog and the contact
-// cache, which is all the roster states. A detail page states its facts with
-// labels instead (adminInspectView), since it has no column to compare.
-type KernelStrip struct {
-	Actions int
-	Seen    string // last_seen, "" until an exchange has succeeded
-	Failed  string // last_contact_failed_at, "" until one has failed
-}
-
-func kernelStrip(p client.Peer) *KernelStrip {
-	return &KernelStrip{Actions: p.Actions, Seen: p.LastSeen, Failed: p.LastContactFailedAt}
 }
 
 // Report is the provider's own evidence pooled over its actions, for the
@@ -348,7 +331,7 @@ func (s *Server) getAdminPeers(w http.ResponseWriter, r *http.Request) {
 	showSuspended := r.URL.Query().Get("all") == "1"
 	view := adminPeersView{
 		OpenForm: openForm(r, "admin"), ShowSuspended: showSuspended,
-		CSRFField: csrf.TemplateField(r),
+		CSRFField: s.csrfField(r),
 		depositForm: depositForm{
 			// A held payment is attributed from its own row, so the reference it
 			// is named by rides into the form rather than being retyped.
@@ -393,14 +376,14 @@ func (s *Server) getAdminPeers(w http.ResponseWriter, r *http.Request) {
 // network, each class in the kernel's own order (§6.6).
 func kernelRows(id client.Identity, peers []client.Peer) []kernelRow {
 	rows := []kernelRow{{
-		Peer:   client.Peer{PublicKey: id.PublicKey, About: id.About},
+		Peer:   client.Peer{PublicKey: id.PublicKey},
 		Class:  classCurrent,
 		Kernel: kernelParty(id.Handle, "", id.PublicKey),
 	}}
 	for _, class := range []string{classParty, classKnown} {
 		for _, p := range peers {
 			if p.Traded == (class == classParty) {
-				rows = append(rows, kernelRow{Peer: p, Class: class, Kernel: kernelParty(p.Petname, p.Nickname, p.PublicKey), Strip: kernelStrip(p)})
+				rows = append(rows, kernelRow{Peer: p, Class: class, Kernel: kernelParty(p.Petname, p.Nickname, p.PublicKey)})
 			}
 		}
 	}
@@ -415,7 +398,7 @@ func (s *Server) getAdminInspect(w http.ResponseWriter, r *http.Request) {
 	key := r.PathValue("key")
 	ctx := r.Context()
 	view, err := s.inspectView(ctx, key, openForm(r, "admin-peer"))
-	view.CSRFField = csrf.TemplateField(r)
+	view.CSRFField = s.csrfField(r)
 	if s.handleErrFragment(w, r, err) {
 		return
 	}
@@ -1035,7 +1018,7 @@ func (s *Server) updateView(r *http.Request) *updateView {
 	if !s.isSuperuser(r) {
 		return nil
 	}
-	v := &updateView{Version: s.version, Parts: s.parts, Can: s.updates != nil, CSRFField: csrf.TemplateField(r)}
+	v := &updateView{Version: s.version, Parts: s.parts, Can: s.updates != nil, CSRFField: s.csrfField(r)}
 	if s.updates != nil {
 		v.UpdateState = s.updates.State()
 	}

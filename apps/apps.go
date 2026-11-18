@@ -24,6 +24,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	"github.com/daios-ai/juice-ui/client"
 	"github.com/daios-ai/juice-ui/session"
@@ -39,6 +40,33 @@ type Programs interface {
 	Start(name string) error
 	Stop(name string) error
 	Status(name string) (supervisor.Status, bool)
+}
+
+// AgentLogins lists this installation's agents on the kernel named: the homes
+// under dir, $JUICE_HOME/agents (ecosystem-standard §2, §7), named by a login
+// on that kernel, sorted. It is the one reading of who is an agent here.
+func AgentLogins(dir, kernel string) []string {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, e := range entries {
+		if IsAgent(dir, kernel, e.Name()) {
+			out = append(out, e.Name())
+		}
+	}
+	return out
+}
+
+// IsAgent reports a home under dir for login, a login on the kernel named.
+func IsAgent(dir, kernel, login string) bool {
+	handle, ok := strings.CutSuffix(login, "@"+kernel)
+	if dir == "" || kernel == "" || !ok || handle == "" || strings.ContainsAny(handle, "/@") || filepath.Base(login) != login {
+		return false
+	}
+	st, err := os.Stat(filepath.Join(dir, login))
+	return err == nil && st.IsDir()
 }
 
 // Bin resolves a sibling program of the family: the override in the environment
@@ -119,6 +147,11 @@ type Conversations interface {
 	// Context is a room's recent conversation as a model reads it, newest
 	// last; refused for a viewer who is not a member.
 	Context(r *http.Request, room string) ([]client.Message, error)
+	// Serves reports whether the request's account has conversations here.
+	// The core asks it once per request: for an account it does not serve,
+	// the page has no rail, the session lands elsewhere, and the app's routes
+	// and watchers are closed (an agent's conversations are its program's).
+	Serves(r *http.Request) bool
 }
 
 // Watcher answers one watch of the page's heartbeat — kind:key:shown, the

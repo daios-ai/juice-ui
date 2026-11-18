@@ -673,7 +673,7 @@ func TestAdminPeersListOrder(t *testing.T) {
 
 	body := getBody(t, cl, srv.URL+"/admin/peers")
 	last := -1
-	for _, mark := range []string{`<span class="action-title"><span class="name mono">kernel</span>`, `"/admin/peers/KEYB"`, `"/admin/peers/KEYD"`, `"/admin/peers/KEYT1"`, `"/admin/peers/KEYT2"`} {
+	for _, mark := range []string{`<span class="name mono">kernel</span> <span class="pill">this kernel</span>`, `"/admin/peers/KEYB"`, `"/admin/peers/KEYD"`, `"/admin/peers/KEYT1"`, `"/admin/peers/KEYT2"`} {
 		i := strings.Index(body, mark)
 		if i <= last {
 			t.Fatalf("%s out of order: %s", mark, body)
@@ -791,10 +791,10 @@ func TestDepositDialogClosesToItsOwnPage(t *testing.T) {
 	}
 }
 
-// §6.6: the kernel's contact cache renders as dated fact on every roster row —
-// when an exchange last succeeded, and when one last failed. Muted text, never
-// a pill: the kernel states no verdict about whether a peer is up, and neither
-// does the UI. Each clause is omitted until that thing has happened.
+// §6.6: when an exchange with a peer last succeeded renders as a dated fact in
+// its row's Seen column, "never" until one has; never a pill: the kernel
+// states no verdict about whether a peer is up, and neither does the UI. This
+// kernel's row states none.
 func TestPeerContactTimestampsRenderAsDatedFacts(t *testing.T) {
 	kernel := authKernel()
 	defer kernel.Close()
@@ -803,23 +803,21 @@ func TestPeerContactTimestampsRenderAsDatedFacts(t *testing.T) {
 	cl := loginClientAs(t, srv.URL, "sys")
 
 	body := getBody(t, cl, srv.URL+"/admin/peers")
-	// Never a status pill — that would read as a verdict on availability.
 	for _, banned := range []string{`pill status-danger">offline`, `pill">unreachable`, ">offline<"} {
 		if strings.Contains(body, banned) {
 			t.Errorf("contact timestamps must not become a status signal: %q", banned)
 		}
 	}
-	// The debtor row has neither timestamp, so both its slots are muted none.
-	// Its own name proves the row rendered at all.
 	if !strings.Contains(body, ">debtor<") {
 		t.Fatal("fixture changed: the debtor row is missing")
 	}
-	// The discovered rows carry last_seen too (v0.12.24 stamps every row), so
-	// catalog freshness appears on both classes.
-	for want, n := range map[string]int{`title="Catalog verified`: 3, `title="Catalog never verified"`: 1, `title="Last contact failed"`: 1, `title="No contact has failed"`: 3} {
-		if got := strings.Count(body, want); got != n {
-			t.Errorf("%s: %d slots, want %d", want, got, n)
-		}
+	// Four peers and this kernel; the debtor has never been seen, and this
+	// kernel's cell is empty.
+	if n := strings.Count(body, `<td data-label="Seen">`); n != 5 {
+		t.Errorf("one Seen cell per row: %d", n)
+	}
+	if strings.Count(body, `<td data-label="Seen">never</td>`) != 1 || strings.Count(body, `<td data-label="Seen"></td>`) != 1 {
+		t.Errorf("never seen once, this kernel's empty: %s", body)
 	}
 }
 

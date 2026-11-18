@@ -115,9 +115,14 @@ func authKernel() *httptest.Server {
 	mux := http.NewServeMux()
 	fakeHealth(mux)
 	mux.HandleFunc("POST /v1/auth/authorize", func(w http.ResponseWriter, r *http.Request) {
-		var in struct{ Handle string }
+		var in struct{ Handle, Password string }
 		_ = json.NewDecoder(r.Body).Decode(&in)
 		lastSignIn = in.Handle
+		if in.Password == "wrongpass" {
+			w.WriteHeader(http.StatusUnauthorized)
+			w.Write([]byte(`{"code":"unauthorized","error":"invalid credentials"}`))
+			return
+		}
 		w.Write([]byte(`{"redirect":"?code=CODE"}`))
 	})
 	mux.HandleFunc("POST /v1/auth/token", func(w http.ResponseWriter, r *http.Request) {
@@ -3999,6 +4004,7 @@ type convApp struct{ launchApp }
 func (convApp) Rail(*http.Request) (template.HTML, error)   { return `<nav class="rail"></nav>`, nil }
 func (convApp) Landing() string                             { return "/browse" }
 func (convApp) Approve(*http.Request, string) (bool, error) { return false, nil }
+func (convApp) Serves(*http.Request) bool                   { return true }
 func (convApp) Context(_ *http.Request, room string) ([]client.Message, error) {
 	if room != "r1" {
 		return nil, fmt.Errorf("not a member")

@@ -55,7 +55,7 @@ func TestCardArtGlyph(t *testing.T) {
 		t.Error("a matched name must draw a glyph")
 	}
 	// No name at all: falls back to the kind glyph, never to nothing.
-	for _, kind := range []string{"http", "wasm", "native", "remote_proxy", "kernel", "agent", "unknown"} {
+	for _, kind := range []string{"http", "wasm", "native", "remote_proxy", "unknown"} {
 		if art := string(CardArt("1", "x", kind)); !strings.Contains(art, `<g transform=`) {
 			t.Errorf("kind %q drew no glyph", kind)
 		}

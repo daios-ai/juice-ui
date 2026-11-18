@@ -73,12 +73,13 @@ test('send refuses what it cannot vouch for', async () => {
   }
 });
 
-test('fetchTx posts the amount with the CSRF header and maps 409 to stale', async () => {
+test('fetchTx posts the amount with the CSRF header and the page\'s account, and maps 409 to stale', async () => {
   let seen;
   const ok = async (url, init) => { seen = { url, init }; return { ok: true, json: async () => tx }; };
-  assert.deepEqual(await fetchTx(ok, '10.00', 'T'), tx);
+  assert.deepEqual(await fetchTx(ok, '10.00', 'T', 'ann@alpha'), tx);
   assert.equal(seen.url, '/wallet/fund');
   assert.equal(seen.init.headers['X-CSRF-Token'], 'T');
+  assert.equal(seen.init.headers['X-Juice-Account'], 'ann@alpha');
   assert.equal(seen.init.body.get('amount'), '10.00');
   await assert.rejects(fetchTx(async () => ({ ok: false, status: 409 }), '1', 'T'), { kind: 'stale' });
   await assert.rejects(fetchTx(async () => ({ ok: false, status: 500 }), '1', 'T'), { kind: 'failed' });

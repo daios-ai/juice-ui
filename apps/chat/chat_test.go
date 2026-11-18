@@ -1188,7 +1188,7 @@ func inSession(c *Chat, sm *scs.SessionManager, h http.HandlerFunc, req *http.Re
 	sm.LoadAndSave(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		r = r.WithContext(context.WithValue(r.Context(), viewerSlot{}, &viewerRead{}))
 		if _, ok := c.deps.Sessions.Tokens(r.Context()); !ok {
-			_ = c.deps.Sessions.Login(r.Context(), client.Tokens{AccessToken: "t", RefreshToken: "r"}, "ann@testnet", session.Pin{})
+			_, _ = c.deps.Sessions.Login(r.Context(), client.Tokens{AccessToken: "t", RefreshToken: "r"}, "ann@testnet", session.Pin{})
 		}
 		h(w, r)
 	})).ServeHTTP(rec, req)
@@ -1616,6 +1616,7 @@ func TestJoinAgentRefreshesItsSession(t *testing.T) {
 	agentHome(t, c, "remy@elsewhere", "X")
 	f.expired["OLD"] = true
 	f.mes["NEW-R-OLD"] = `{"address":{"address":"helper@testnet","principal":"helper@testnet"},"connectors":[]}`
+	f.me = `{"id":"P1","address":{"address":"chat@testnet","principal":"chat@testnet"}}` // chat's own session, which setup records
 	if err := c.setup(context.Background()); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
@@ -4418,6 +4419,22 @@ func TestAPricedCreationWithoutScriptIsAsked(t *testing.T) {
 		`name="quote" value="` + f.quoteOf(roomCreateName) + `"`, `name="quoted" value="` + c.self() + `/room/create"`, ">bob@testnet</textarea>", `value="tea"`} {
 		if !strings.Contains(got, want) {
 			t.Errorf("the rail's dialog lacks %s", want)
+		}
+	}
+}
+
+// An agent's account has no conversations in the UI: its rooms are its
+// program's, and a page of them would settle its deliveries (rule 7), bill its
+// reads and post in its name. A person's account is served.
+func TestChatDoesNotServeAnAgentsAccount(t *testing.T) {
+	f := newFakeKernel()
+	defer f.close()
+	c, _ := testChat(t, f)
+	agentHome(t, c, "helper@testnet", "T")
+	for me, want := range map[string]bool{"ann@testnet": true, "helper@testnet": false, "helper@elsewhere": true} {
+		c.deps.Me = func(*http.Request) string { return me }
+		if got := c.Serves(httptest.NewRequest(http.MethodGet, "/chat", nil)); got != want {
+			t.Errorf("Serves(%s) = %v, want %v", me, got, want)
 		}
 	}
 }

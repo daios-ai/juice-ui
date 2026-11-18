@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/daios-ai/juice-ui/client"
-	"github.com/daios-ai/juice-ui/session"
 )
 
 // ServiceAccount manages an app's own Juice user — the "an app is a Juice user"
@@ -132,16 +131,12 @@ func (s *ServiceAccount) provision(ctx context.Context, setup func(context.Conte
 	return nil
 }
 
-// login ensures the account exists (once) and obtains a token pair via PKCE.
+// login ensures the account exists (once) and signs in.
 func (s *ServiceAccount) login(ctx context.Context) error {
 	if err := s.ensureAccount(ctx); err != nil {
 		return err
 	}
-	verifier, err := session.NewVerifier()
-	if err != nil {
-		return err
-	}
-	code, err := s.deps.Client.Authorize(ctx, s.deps.Address(s.handle), s.password, session.Challenge(verifier))
+	toks, err := s.deps.Client.SignIn(ctx, s.deps.Address(s.handle), s.password)
 	if err != nil {
 		// Any definitive auth response (even a rejection) proves the account
 		// exists, so stop trying to create it; a 429 is not definitive.
@@ -150,11 +145,7 @@ func (s *ServiceAccount) login(ctx context.Context) error {
 			s.ensured = true
 			s.mu.Unlock()
 		}
-		return fmt.Errorf("authorize %s: %w", s.handle, err)
-	}
-	toks, err := s.deps.Client.ExchangeCode(ctx, code, verifier)
-	if err != nil {
-		return fmt.Errorf("token exchange for %s: %w", s.handle, err)
+		return fmt.Errorf("sign in %s: %w", s.handle, err)
 	}
 	s.mu.Lock()
 	s.toks = toks

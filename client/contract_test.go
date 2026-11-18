@@ -18,8 +18,6 @@ package client_test
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"go/ast"
@@ -821,13 +819,7 @@ func eventually(t *testing.T, what string, cond func() bool) {
 
 // signIn is login returning the whole token pair.
 func signIn(kk *k, address, password string) (client.Tokens, error) {
-	verifier := base64.RawURLEncoding.EncodeToString([]byte(address + "-contract-verifier-0123456789abcdef"))
-	sum := sha256.Sum256([]byte(verifier))
-	code, err := kk.c.Authorize(context.Background(), address, password, base64.RawURLEncoding.EncodeToString(sum[:]))
-	if err != nil {
-		return client.Tokens{}, err
-	}
-	return kk.c.ExchangeCode(context.Background(), code, verifier)
+	return kk.c.SignIn(context.Background(), address, password)
 }
 
 // requests are the client's types that only ever go to the kernel.

@@ -1,8 +1,13 @@
+// Package session holds the server-side browser session: the accounts its
+// person signed in to, each with its kernel token pair, the account in use,
+// and the single-flight token-refresh logic (R5.2). Tokens never leave the
+// server (R8.3).
 package session
 
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 
@@ -26,38 +31,52 @@ const (
 // Keys of the scs record. A request saves its own copy of the record whole,
 // so a request that loaded it before another changed a value, and finishes
 // after, writes the old value back. The record therefore holds what is written
-// once (the address, the pin and the login time, at login) and what a stale
-// save cannot make dangerous: the PKCE verifier lives within one request, the
-// grant state is refused by the kernel once completed should a stale save
-// restore it, and the badge cache is a cache. What a stale save would make
-// wrong — the token pair, the last activity, the recovery phrase — lives in
-// the Manager's store instead (live).
+// once (the pin and the login time, at the first sign-in) and what a stale
+// save cannot make dangerous: the grant state is refused by the kernel once
+// completed should a stale save restore it, and names the account that began
+// it. What a stale save would make wrong — the accounts, their tokens, the
+// account in use, the last activity, the recovery phrase — lives in the
+// Manager's store instead (live).
 const (
-	keyVerifier    = "pkce_verifier"
-	keyAddress     = "address"      // the signed-in user's address, handle@kernel
-	keyGrantState  = "grant_state"  // opaque state for an in-flight OAuth grant consent
-	keyGrantAction = "grant_action" // the action the in-flight grant is for (for the return redirect)
-	keyKernelKey   = "kernel_public_key"
-	keyKernelNet   = "kernel_network_fingerprint"
-	keyLoginAt     = "login_at" // unix nanoseconds of the login
+	keyGrantState   = "grant_state"   // opaque state for an in-flight OAuth grant consent
+	keyGrantAction  = "grant_action"  // the action the in-flight grant is for (for the return redirect)
+	keyGrantAccount = "grant_account" // the account that began it
+	keyKernelKey    = "kernel_public_key"
+	keyKernelNet    = "kernel_network_fingerprint"
+	keyLoginAt      = "login_at" // unix nanoseconds of the first sign-in
 )
 
 // live is a session's state that no request's copy of the record may decide,
-// kept by the Manager under its lock and keyed by the scs token, which is
-// fixed from the moment the entry is made: only Login and PutRecoveryPhrase
-// make one, each right after renewing the token, so a later RenewToken must
-// move the entry with it. Every other write changes an entry that exists and
-// never makes one, so a session ended while a request was in flight stays
-// ended. An entry leaves at Logout, or once its record would have (expires,
-// the scs Lifetime from when it was made): Sweep removes expired ones, and
-// every read treats one as gone.
+// kept by the Manager under its lock and keyed by the scs token. Only Login
+// and PutRecoveryPhrase make an entry; Login and Use renew the token and move
+// the entry with it. Every other write changes an entry that exists and never
+// makes one, so a session ended while a request was in flight stays ended. An
+// entry leaves at Logout, or once its record would have (expires, the scs
+// Lifetime from when it was made): Sweep removes expired ones, and every read
+// treats one as gone.
+//
+// A session holds every account its person signed in to, one of them in use
+// (as Gmail's and the juice CLI's `auth use` do); the account in use is what
+// every request acts as. It lives here and not in the record, since a stale
+// save of the record would otherwise switch the account back.
 type live struct {
-	toks     client.Tokens     // the kernel's pair; zero before login
-	activeAt int64             // unix nanoseconds of the person's last request; only moves forward
-	phrase   string            // the recovery phrase until acknowledged
-	cache    map[string]string // what an app last read for this user, by app
+	accounts map[string]*account // by address
+	order    []string            // the addresses, as signed in
+	using    string              // the account in use
+	activeAt int64               // unix nanoseconds of the person's last request; only moves forward
+	phrase   string              // the recovery phrase until acknowledged
 	expires  time.Time
+	ended    bool // the session ended: a refresh in flight stores nothing in it
 }
+
+// account is one signed-in account of a session.
+type account struct {
+	toks  client.Tokens     // the kernel's pair
+	cache map[string]string // what an app last read for this account, by app
+}
+
+// acting is the account in use, nil when there is none.
+func (e *live) acting() *account { return e.accounts[e.using] }
 
 // Pin is the kernel this session signed in to: its public key and the
 // fingerprint of the world it serves. A client sends a stored credential only to the server it
@@ -110,11 +129,20 @@ func (m *Manager) entryLocked(key string, fn func(*live)) bool {
 		return false
 	}
 	if !m.Now().Before(e.expires) {
-		delete(m.live, key)
+		m.endLocked(key)
 		return false
 	}
 	fn(e)
 	return true
+}
+
+// endLocked removes the entry under key, marking it ended so that a refresh
+// holding it stores nothing. A renewal moves an entry and does not end it.
+func (m *Manager) endLocked(key string) {
+	if e := m.live[key]; e != nil {
+		e.ended = true
+	}
+	delete(m.live, key)
 }
 
 // create renews the session token and makes its entry, carrying over the
@@ -124,7 +152,7 @@ func (m *Manager) create(ctx context.Context, fill func(*live)) error {
 	defer m.mu.Unlock()
 	var phrase string
 	m.entryLocked(m.sm.Token(ctx), func(e *live) { phrase = e.phrase })
-	delete(m.live, m.sm.Token(ctx))
+	m.endLocked(m.sm.Token(ctx))
 	if err := m.sm.RenewToken(ctx); err != nil {
 		return err
 	}
@@ -199,20 +227,87 @@ func (m *Manager) Expiry(ctx context.Context) Expiry {
 // LoadAndSave middleware.
 func (m *Manager) SCS() *scs.SessionManager { return m.sm }
 
-// Login renews the session token to prevent fixation, makes the session's
-// entry with the fresh token pair, and records the user's address and the
-// kernel this login is for.
-func (m *Manager) Login(ctx context.Context, t client.Tokens, address string, pin Pin) error {
+// ErrOtherKernel refuses an account of a kernel other than the one the
+// session signed in to: one process serves one kernel (requirements §2).
+var ErrOtherKernel = errors.New("that account is on another kernel")
+
+// Login adds a signed-in account to the session and puts it in use. The first
+// makes the session's entry and records the kernel and the time; a further one
+// joins the entry, refused when its kernel is another. Either way the session
+// token is renewed, against fixation and as at any change of privilege. It
+// returns the pair an earlier sign-in to the same account held, for the caller
+// to revoke.
+func (m *Manager) Login(ctx context.Context, t client.Tokens, address string, pin Pin) (client.Tokens, error) {
 	now := m.Now()
-	if err := m.create(ctx, func(e *live) { e.toks, e.activeAt = t, now.UnixNano() }); err != nil {
-		return err
+	if m.IsAuthenticated(ctx) {
+		if m.Pin(ctx) != pin {
+			return client.Tokens{}, ErrOtherKernel
+		}
+		var old client.Tokens
+		ok, err := m.renew(ctx, func(e *live) {
+			if a := e.accounts[address]; a != nil {
+				old, a.toks = a.toks, t
+			} else {
+				e.accounts[address] = &account{toks: t}
+				e.order = append(e.order, address)
+			}
+			e.using, e.activeAt = address, max(e.activeAt, now.UnixNano())
+		})
+		if err == nil && !ok {
+			err = ErrNoSession
+		}
+		return old, err
 	}
-	m.sm.Put(ctx, keyAddress, address)
+	err := m.create(ctx, func(e *live) {
+		e.accounts = map[string]*account{address: {toks: t}}
+		e.order, e.using, e.activeAt = []string{address}, address, now.UnixNano()
+	})
+	if err != nil {
+		return client.Tokens{}, err
+	}
 	m.sm.Put(ctx, keyKernelKey, pin.PublicKey)
 	m.sm.Put(ctx, keyKernelNet, pin.NetworkFingerprint)
 	m.sm.Put(ctx, keyLoginAt, now.UnixNano())
-	m.sm.Remove(ctx, keyVerifier)
-	return nil
+	return client.Tokens{}, nil
+}
+
+// Use puts an account the session holds in use, renewing the session token as
+// Login does. It reports whether the session holds that account.
+func (m *Manager) Use(ctx context.Context, address string) bool {
+	held := false
+	_, err := m.renew(ctx, func(e *live) {
+		if held = e.accounts[address] != nil; held {
+			e.using = address
+		}
+	})
+	return held && err == nil
+}
+
+// Accounts are the addresses the session holds, as signed in.
+func (m *Manager) Accounts(ctx context.Context) []string {
+	var out []string
+	m.entry(ctx, func(e *live) { out = append(out, e.order...) })
+	return out
+}
+
+// renew changes the session's entry with fn and renews the session token,
+// moving the entry with it, in one step under the lock. It reports whether
+// there was an entry.
+func (m *Manager) renew(ctx context.Context, fn func(*live)) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	key := m.sm.Token(ctx)
+	var e *live
+	if !m.entryLocked(key, func(x *live) { e = x }) {
+		return false, nil
+	}
+	fn(e)
+	if err := m.sm.RenewToken(ctx); err != nil {
+		return true, err
+	}
+	delete(m.live, key)
+	m.live[m.sm.Token(ctx)] = e
+	return true, nil
 }
 
 // Pin returns the kernel this session signed in to. A session that predates the
@@ -225,30 +320,39 @@ func (m *Manager) Pin(ctx context.Context) Pin {
 	}
 }
 
-// Logout deletes the session's entry and destroys its record, and returns the
-// pair the entry held for the caller to revoke. A request in flight can no
-// longer bring either back: it changes only an entry that exists, and a
-// record without one holds no session. The pair is taken under the lock that
-// a refresh stores under, so every pair the kernel issued is revoked: the one
-// stored before is returned here, and one stored after finds no entry and is
-// revoked by the refresh.
-func (m *Manager) Logout(ctx context.Context) (client.Tokens, error) {
-	var t client.Tokens
+// Logout deletes the session's entry, every account with it (one exit,
+// requirements §5), and destroys its record, and returns the pairs the entry
+// held for the caller to revoke. A request in flight can no longer bring
+// either back: it changes only an entry that exists, and a record without one
+// holds no session. The pairs are taken under the lock that a refresh stores
+// under, so every pair the kernel issued is revoked: one stored before is
+// returned here, and one stored after finds no entry and is revoked by the
+// refresh.
+func (m *Manager) Logout(ctx context.Context) ([]client.Tokens, error) {
+	var out []client.Tokens
 	m.mu.Lock()
-	m.entryLocked(m.sm.Token(ctx), func(e *live) { t = e.toks })
-	delete(m.live, m.sm.Token(ctx))
+	m.entryLocked(m.sm.Token(ctx), func(e *live) {
+		for _, a := range e.order {
+			out = append(out, e.accounts[a].toks)
+		}
+	})
+	m.endLocked(m.sm.Token(ctx))
 	m.mu.Unlock()
-	return t, m.sm.Destroy(ctx)
+	return out, m.sm.Destroy(ctx)
 }
 
-// Tokens returns the session's current token pair and whether it is signed in.
+// Tokens returns the token pair of the account in use and whether it is signed in.
 func (m *Manager) Tokens(ctx context.Context) (client.Tokens, bool) {
 	var t client.Tokens
-	m.entry(ctx, func(e *live) { t = e.toks })
+	m.entry(ctx, func(e *live) {
+		if a := e.acting(); a != nil {
+			t = a.toks
+		}
+	})
 	return t, t.AccessToken != "" && t.RefreshToken != ""
 }
 
-// UpdateAppCache replaces what an app last read for this session's user with
+// UpdateAppCache replaces what an app last read for the account in use with
 // what fn makes of it, in one step under the entry's lock, so concurrent
 // updates each see the one before. The value lives in the server-side entry,
 // never in the session record or the browser, and goes with the session. It
@@ -256,52 +360,40 @@ func (m *Manager) Tokens(ctx context.Context) (client.Tokens, bool) {
 // and fn is not run.
 func (m *Manager) UpdateAppCache(ctx context.Context, app string, fn func(old string) string) {
 	m.entry(ctx, func(e *live) {
-		if e.cache == nil {
-			e.cache = map[string]string{}
+		a := e.acting()
+		if a == nil {
+			return
 		}
-		e.cache[app] = fn(e.cache[app])
+		if a.cache == nil {
+			a.cache = map[string]string{}
+		}
+		a.cache[app] = fn(a.cache[app])
 	})
 }
 
 // AppCache returns what UpdateAppCache kept for the app.
 func (m *Manager) AppCache(ctx context.Context, app string) (value string, ok bool) {
-	m.entry(ctx, func(e *live) { value = e.cache[app] })
+	m.entry(ctx, func(e *live) {
+		if a := e.acting(); a != nil {
+			value = a.cache[app]
+		}
+	})
 	return value, value != ""
 }
 
-// Address returns the signed-in user's address, handle@kernel, or "". A
-// session that predates addresses holds no pin either, so it is logged out
-// before this is read.
+// Address returns the account in use, handle@kernel, or "" when signed out.
+// A switch renews the session token, so a request that began before it reads
+// nothing after it: no request mixes two accounts.
 func (m *Manager) Address(ctx context.Context) string {
-	return m.sm.GetString(ctx, keyAddress)
+	var a string
+	m.entry(ctx, func(e *live) { a = e.using })
+	return a
 }
 
 // IsAuthenticated reports whether a token pair is present.
 func (m *Manager) IsAuthenticated(ctx context.Context) bool {
 	_, ok := m.Tokens(ctx)
 	return ok
-}
-
-// BeginPKCE generates a verifier, stores it server-side, and returns the S256
-// challenge to send to the kernel's authorize endpoint. The verifier is never
-// exposed to the browser (R5.1).
-func (m *Manager) BeginPKCE(ctx context.Context) (challenge string, err error) {
-	v, err := NewVerifier()
-	if err != nil {
-		return "", err
-	}
-	m.sm.Put(ctx, keyVerifier, v)
-	return Challenge(v), nil
-}
-
-// TakeVerifier returns and clears the stored PKCE verifier.
-func (m *Manager) TakeVerifier(ctx context.Context) (string, bool) {
-	v := m.sm.GetString(ctx, keyVerifier)
-	if v == "" {
-		return "", false
-	}
-	m.sm.Remove(ctx, keyVerifier)
-	return v, true
 }
 
 // PutGrantState stashes the opaque state (and target action) for an in-flight
@@ -311,26 +403,36 @@ func (m *Manager) TakeVerifier(ctx context.Context) (string, bool) {
 func (m *Manager) PutGrantState(ctx context.Context, state, action string) {
 	m.sm.Put(ctx, keyGrantState, state)
 	m.sm.Put(ctx, keyGrantAction, action)
+	m.sm.Put(ctx, keyGrantAccount, m.Address(ctx))
 }
 
 // TakeGrantState returns and clears the stored grant state + action. The caller
-// must require an exact state match against the callback's state parameter.
+// must require an exact state match against the callback's state parameter. A
+// consent begun by another account of the session is none of this one's.
 func (m *Manager) TakeGrantState(ctx context.Context) (state, action string, ok bool) {
 	state = m.sm.GetString(ctx, keyGrantState)
 	if state == "" {
 		return "", "", false
 	}
 	action = m.sm.GetString(ctx, keyGrantAction)
+	account := m.sm.GetString(ctx, keyGrantAccount)
 	m.sm.Remove(ctx, keyGrantState)
 	m.sm.Remove(ctx, keyGrantAction)
+	m.sm.Remove(ctx, keyGrantAccount)
+	if account != m.Address(ctx) {
+		return "", "", false
+	}
 	return state, action, true
 }
 
-// PutRecoveryPhrase stashes the freshly-generated seed phrase server-side,
-// in a new entry under a renewed session token, so it can be shown on the
-// post-signup page until acknowledged. It never leaves the server except on
-// that page.
+// PutRecoveryPhrase stashes the freshly-generated seed phrase server-side, so
+// it can be shown on the post-signup page until acknowledged; it never leaves
+// the server except on that page. A session signed in keeps its entry and its
+// accounts; otherwise a new entry is made under a renewed session token.
 func (m *Manager) PutRecoveryPhrase(ctx context.Context, phrase string) error {
+	if m.entry(ctx, func(e *live) { e.phrase = phrase }) {
+		return nil
+	}
 	return m.create(ctx, func(e *live) { e.phrase = phrase })
 }
 
@@ -351,16 +453,16 @@ func (m *Manager) TakeRecoveryPhrase(ctx context.Context) (phrase string, ok boo
 	key := m.sm.Token(ctx)
 	m.entryLocked(key, func(e *live) {
 		phrase, e.phrase = e.phrase, ""
-		if e.toks.RefreshToken == "" {
-			delete(m.live, key) // an entry made for the phrase alone ends with it
+		if len(e.accounts) == 0 {
+			m.endLocked(key) // an entry made for the phrase alone ends with it
 		}
 	})
 	return phrase, phrase != ""
 }
 
-// Do runs fn with the current access token. If fn returns ErrUnauthenticated,
-// Do refreshes the token pair once (single-flight per session) and retries fn
-// exactly once. A failed refresh returns the refresh error so the caller can
+// Do runs fn with the access token of the account in use. If fn returns
+// ErrUnauthenticated, Do refreshes that pair once (single-flight per session
+// and account) and retries fn exactly once. A failed refresh returns the refresh error so the caller can
 // clear the session and send the user to login (R5.3).
 func (m *Manager) Do(ctx context.Context, fn func(token string) error) error {
 	toks, ok := m.Tokens(ctx)
@@ -378,8 +480,8 @@ func (m *Manager) Do(ctx context.Context, fn func(token string) error) error {
 	return fn(rotated.AccessToken)
 }
 
-// refreshSingleFlight refreshes the token pair once per session however many
-// requests ask at the same time. Rotation kills the prior refresh token, so a
+// refreshSingleFlight refreshes an account's token pair once per session
+// however many requests ask at the same time. Rotation kills the prior refresh token, so a
 // request that joins a refresh in flight takes its answer, and one that comes
 // after finds the rotated pair in the store, where every request reads it,
 // rather than presenting a token that no longer exists. The kernel call is
@@ -388,9 +490,25 @@ func (m *Manager) Do(ctx context.Context, fn func(token string) error) error {
 // back: the pair nobody now holds is revoked. The group keeps no entry past
 // the call.
 func (m *Manager) refreshSingleFlight(ctx context.Context, old client.Tokens) (client.Tokens, error) {
-	key := m.sm.Token(ctx)
-	v, err, _ := m.refreshes.Do(key, func() (any, error) {
-		cur, ok := m.Tokens(ctx)
+	address := m.Address(ctx)
+	// The refresh holds the entry itself, not the session token that named it:
+	// a switch renews the token and moves the entry, and the rotated pair must
+	// still reach its account, while an ended session takes none.
+	var e *live
+	m.entry(ctx, func(x *live) { e = x })
+	if e == nil {
+		return client.Tokens{}, ErrNoSession
+	}
+	tokens := func() (client.Tokens, bool) {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		if a := e.accounts[address]; a != nil && !e.ended {
+			return a.toks, true
+		}
+		return client.Tokens{}, false
+	}
+	v, err, _ := m.refreshes.Do(fmt.Sprintf("%p %s", e, address), func() (any, error) {
+		cur, ok := tokens()
 		if !ok {
 			return nil, ErrNoSession
 		}
@@ -402,7 +520,14 @@ func (m *Manager) refreshSingleFlight(ctx context.Context, old client.Tokens) (c
 		if err != nil {
 			return nil, err
 		}
-		if !m.entry(ctx, func(e *live) { e.toks = nt }) {
+		m.mu.Lock()
+		a := e.accounts[address]
+		stored := a != nil && !e.ended
+		if stored {
+			a.toks = nt
+		}
+		m.mu.Unlock()
+		if !stored {
 			_ = m.issuer.Logout(kctx, nt.RefreshToken)
 			return nil, ErrNoSession
 		}

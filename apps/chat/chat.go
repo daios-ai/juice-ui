@@ -161,16 +161,7 @@ func (c *Chat) setup(ctx context.Context) error {
 	if c.deps.Home == "" || c.deps.Programs == nil {
 		return errors.New("chat: this UI has no home to run the chat server in")
 	}
-	toks := c.sa.Tokens()
-	me, err := c.deps.Client.Me(ctx, toks.AccessToken)
-	if err != nil {
-		return err
-	}
-	records := filepath.Join(c.root(), "client")
-	if err := c.deps.Client.RecordKernel(ctx, records); err != nil {
-		return err
-	}
-	if err := client.WriteCredential(filepath.Join(records, "credentials", c.login()+".json"), toks, me.ID); err != nil {
+	if err := c.deps.Client.RecordLogin(ctx, filepath.Join(c.root(), "client"), c.login(), c.sa.Tokens()); err != nil {
 		return err
 	}
 	if err := c.serve(ctx); err != nil {
@@ -604,36 +595,23 @@ func (c *Chat) joinAgents(ctx context.Context) {
 // client/ (ecosystem-standard §2).
 func (c *Chat) root() string { return filepath.Dir(c.deps.Home) }
 
-// agents lists this kernel's agents: the homes under $JUICE_HOME/agents named
-// by a login on this kernel.
+// agents lists this kernel's agents (apps.AgentLogins).
 func (c *Chat) agents() []string {
 	if c.deps.Home == "" {
 		return nil
 	}
-	dirs, err := os.ReadDir(filepath.Join(c.root(), "agents"))
-	if err != nil {
-		return nil
-	}
-	var out []string
-	for _, d := range dirs {
-		if d.IsDir() && c.isLocalAgent(d.Name()) {
-			out = append(out, d.Name())
-		}
-	}
-	sort.Strings(out)
-	return out
+	return apps.AgentLogins(filepath.Join(c.root(), "agents"), c.kernelName())
 }
 
-// isLocalAgent reports a home under $JUICE_HOME/agents for login, a login on
-// this kernel.
+// isLocalAgent reports whether login is one of this kernel's agents.
 func (c *Chat) isLocalAgent(login string) bool {
-	handle, ok := strings.CutSuffix(login, "@"+c.kernelName())
-	if c.deps.Home == "" || !ok || handle == "" || filepath.Base(login) != login {
-		return false
-	}
-	st, err := os.Stat(filepath.Join(c.root(), "agents", login))
-	return err == nil && st.IsDir()
+	return c.deps.Home != "" && apps.IsAgent(filepath.Join(c.root(), "agents"), c.kernelName(), login)
 }
+
+// Serves is false for an agent's account: its conversations are its program's,
+// and a page of its rooms would settle its deliveries (rule 7), bill its reads
+// and post in its name.
+func (c *Chat) Serves(r *http.Request) bool { return !c.isLocalAgent(c.deps.Me(r)) }
 
 // kernelName is the name this kernel calls itself.
 func (c *Chat) kernelName() string { return kernelOf(c.login()) }

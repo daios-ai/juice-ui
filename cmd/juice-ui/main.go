@@ -80,6 +80,9 @@ type wiring struct {
 	// parts are the kernel and agent this installation holds, read once the
 	// installer is done, since only its Download step replaces them.
 	parts []server.Part
+	// assistant hands the agents app the assistant's password the installer
+	// asked for.
+	assistant func(password string)
 }
 
 // wire constructs the client, the identity (pinned to the recorded key when
@@ -98,9 +101,10 @@ func wire(cfg Config, log *slog.Logger) (*wiring, error) {
 	w.apps = append(w.apps, ch)
 	appTemplates = append(appTemplates, ch.Templates())
 	// The agents app manages sibling juice-agents (homes under $JUICE_HOME/agents
-	// and their serve processes). It owns no kernel account and no persisted state.
+	// and their serve processes). It owns no kernel account.
 	ag := agents.New()
 	w.apps = append(w.apps, ag)
+	w.assistant = ag.WithAssistant
 	appTemplates = append(appTemplates, ag.Templates())
 
 	// The renderer must include each enabled app's templates so its pages
@@ -446,7 +450,7 @@ func run() (code int, next string) {
 	inst := &kernel.Installation{Home: cfg.Root, URL: kernelURL, Log: log, Programs: sup, Ctx: ctx}
 	defer inst.WaitBoot() // ctx has ended: a first boot in flight is ending
 	in := installer.New(installer.Options{Kernel: installation{inst}, Chrome: chrome{w.renderer},
-		URL: cfg.KernelBaseURL, Listen: cfg.ListenAddr, Home: cfg.Root, Log: log, Run: sup.Run})
+		URL: cfg.KernelBaseURL, Listen: cfg.ListenAddr, Home: cfg.Root, Log: log, Run: sup.Run, Assistant: w.assistant})
 	var up *updater
 	if inst.Local() && updatable(cfg.Root) {
 		up = &updater{inst: inst, log: log, ctx: ctx, stop: stop}

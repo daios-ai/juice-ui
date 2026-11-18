@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -19,6 +20,7 @@ import (
 	"github.com/alexedwards/scs/v2"
 	"github.com/daios-ai/juice-ui/apps"
 	"github.com/daios-ai/juice-ui/client"
+	"github.com/daios-ai/juice-ui/server"
 	"github.com/daios-ai/juice-ui/session"
 	"github.com/daios-ai/juice-ui/supervisor"
 )
@@ -164,22 +166,39 @@ func TestWriteAndReadEditableFiles(t *testing.T) {
 	}
 }
 
-func TestListSorted(t *testing.T) {
-	a, _, _ := testApp(t)
-	_ = a.create("zebra")
-	_ = a.create("alpha")
-	// A stray file, another kernel's agent and a bare-named home are not this
-	// kernel's agents.
+// The fleet's cards are this kernel's agents, those that need the operator
+// first — stopped on an error — then by handle; a stray file, another kernel's
+// agent and a bare-named home are none.
+func TestCardsPutWhatNeedsTheOperatorFirst(t *testing.T) {
+	a, fl, _ := testApp(t)
+	for _, h := range []string{"zebra", "alpha", "mid"} {
+		_ = a.create(h)
+		_ = a.start(h)
+	}
 	_ = os.WriteFile(filepath.Join(a.root, "notes.txt"), []byte("x"), 0o600)
 	_ = os.Mkdir(filepath.Join(a.root, "beta@other"), 0o700)
 	_ = os.Mkdir(filepath.Join(a.root, "gamma"), 0o700)
-	rows, err := a.list(httptest.NewRequest(http.MethodGet, "/agents", nil))
+	cards, err := a.cards(httptest.NewRequest(http.MethodGet, "/agents", nil))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rows) != 2 || rows[0].Handle != "alpha" || rows[1].Handle != "zebra" {
-		t.Fatalf("list = %+v, want [alpha zebra]", rows)
+	if got := handles(cards); got != "alpha,mid,zebra" {
+		t.Fatalf("cards = %s, want by handle", got)
 	}
+	fl.up["agent-zebra@testnet"] = false
+	_ = os.WriteFile(a.logPath("zebra"), []byte("error: no session for zebra@testnet\n"), 0o600)
+	cards, _ = a.cards(httptest.NewRequest(http.MethodGet, "/agents", nil))
+	if got := handles(cards); got != "zebra,alpha,mid" || !cards[0].Attention() || cards[1].Attention() {
+		t.Fatalf("cards = %s, want the stopped one first", got)
+	}
+}
+
+func handles(cards []card) string {
+	var out []string
+	for _, c := range cards {
+		out = append(out, c.Handle)
+	}
+	return strings.Join(out, ",")
 }
 
 func TestRemove(t *testing.T) {
@@ -246,10 +265,6 @@ func TestGetIndexRendersList(t *testing.T) {
 	if !ok || len(lv.Agents) != 1 || lv.Agents[0].Handle != "research" {
 		t.Fatalf("listView = %+v", cap.data)
 	}
-	// Each row carries a CSRF field: its status cell holds the Start/Stop form.
-	if lv.Agents[0].CSRF == "" {
-		t.Error("row missing CSRF for its inline form")
-	}
 }
 
 // refused reads the New agent dialog as it came back: open, at 422, with its
@@ -275,6 +290,7 @@ func TestPostCreateRefusesBeforeTheKernel(t *testing.T) {
 		{"handle=%40research&password=pw", "@research", "lowercase"},
 		{"handle=taken&password=pw", "taken", "already exists"},
 		{"handle=research", "research", "password"},
+		{"handle=research&password=pw&confirm_password=pw2", "research", "don't match"},
 	} {
 		a.postCreate(httptest.NewRecorder(), postForm("/agents", c.body))
 		if msg := refused(t, cap, c.handle); !strings.Contains(msg, c.msg) {
@@ -293,8 +309,8 @@ func TestPostCreateRefusesBeforeTheKernel(t *testing.T) {
 // daemon; a handle the kernel already holds is adopted, not created twice.
 func TestPostCreateMakesAccountSessionHomeAndStarts(t *testing.T) {
 	a, k, fl, cap := kernelApp(t)
-	a.postCreate(httptest.NewRecorder(), postForm("/agents", "handle=research&password=pw"))
-	if cap.flashKind != "success" || cap.flashTo != "/agents/research?form=fund" {
+	a.postCreate(httptest.NewRecorder(), postForm("/agents", "handle=research&password=pw&confirm_password=pw"))
+	if cap.flashKind != "success" || cap.flashTo != "/agents?form=fund&handle=research" {
 		t.Fatalf("create lands on Fund: %q to %q (%+v)", cap.flashKind, cap.flashTo, cap.data)
 	}
 	if len(k.created) != 1 || k.created[0] != "research@testnet" {
@@ -311,7 +327,7 @@ func TestPostCreateMakesAccountSessionHomeAndStarts(t *testing.T) {
 	}
 	// An account the kernel holds already: adopted on its password.
 	k.me = "taken@testnet"
-	a.postCreate(httptest.NewRecorder(), postForm("/agents", "handle=taken&password=pw"))
+	a.postCreate(httptest.NewRecorder(), postForm("/agents", "handle=taken&password=pw&confirm_password=pw"))
 	if cap.flashKind != "success" || !a.exists("taken") {
 		t.Fatalf("adopting an existing account: %q %+v", cap.flashKind, cap.data)
 	}
@@ -321,7 +337,7 @@ func TestPostCreateMakesAccountSessionHomeAndStarts(t *testing.T) {
 // nothing is made.
 func TestPostCreateWrongPassword(t *testing.T) {
 	a, _, fl, cap := kernelApp(t)
-	a.postCreate(httptest.NewRecorder(), postForm("/agents", "handle=research&password=nope"))
+	a.postCreate(httptest.NewRecorder(), postForm("/agents", "handle=research&password=nope&confirm_password=nope"))
 	if msg := refused(t, cap, "research"); msg != "Password is incorrect." {
 		t.Fatalf("error = %q", msg)
 	}
@@ -330,38 +346,40 @@ func TestPostCreateWrongPassword(t *testing.T) {
 	}
 }
 
-// Start with a password makes the login's session first, then spawns; a wrong
-// password returns the Start dialog open and spawns nothing; while a daemon is
-// alive the post is a no-op and writes no credential.
-func TestPostStartWithPassword(t *testing.T) {
-	a, _, fl, cap := kernelApp(t)
+// Start always asks for the password (requirements §6.1): none, or a wrong
+// one, returns the Start dialog open and changes nothing; the right one
+// records the session and starts the daemon; an agent already running is left
+// as it is, nothing signed in.
+func TestPostStartAlwaysAsks(t *testing.T) {
+	a, k, fl, cap := kernelApp(t)
 	_ = a.create("research")
-	post := func(body string) {
+	post := func(body string) *httptest.ResponseRecorder {
 		req := postForm("/agents/research/start", body)
 		req.SetPathValue("handle", "research")
-		a.postStart(httptest.NewRecorder(), req)
+		rec := httptest.NewRecorder()
+		a.postStart(rec, req)
+		return rec
 	}
-	post("password=nope")
-	v, ok := cap.data.(detailView)
-	if !ok || cap.status != http.StatusUnprocessableEntity || v.OpenForm != "start" || v.Error != "Password is incorrect." || len(fl.started) != 0 {
-		t.Fatalf("want the Start dialog back open at 422 and nothing spawned, got %d %+v", cap.status, cap.data)
+	for _, body := range []string{"", "password=nope"} {
+		post(body)
+		v := opened(cap)
+		if cap.status != http.StatusUnprocessableEntity || v.OpenForm != "start" || v.Error != "Password is incorrect." || len(fl.started) != 0 {
+			t.Fatalf("%q: want the Start dialog back open at 422 and nothing started, got %d %+v", body, cap.status, cap.data)
+		}
+		if _, err := os.Stat(a.credPath("research")); !os.IsNotExist(err) {
+			t.Fatal("a refused password writes no session")
+		}
 	}
 	post("password=pw")
 	if cap.err != nil || len(fl.started) != 1 {
-		t.Fatalf("start with a password: %v started=%d", cap.err, len(fl.started))
+		t.Fatalf("start: %v started=%d", cap.err, len(fl.started))
 	}
-	st, err := os.Stat(a.credPath("research"))
-	if err != nil {
-		t.Fatal("the session must be written before the spawn")
+	if _, err := os.Stat(a.credPath("research")); err != nil {
+		t.Fatal("the session is written before the start")
 	}
-	fl.drain = true
-	_ = fl.Stop(programName("research@testnet"))
-	post("password=pw")
-	if len(fl.started) != 1 {
-		t.Fatalf("a draining daemon is alive: no second spawn, started=%d", len(fl.started))
-	}
-	if st2, _ := os.Stat(a.credPath("research")); st2.ModTime() != st.ModTime() {
-		t.Fatal("no credential is written while the agent runs")
+	k.paths = nil
+	if rec := post("password=pw"); rec.Code != http.StatusSeeOther || len(fl.started) != 1 || len(k.paths) != 0 {
+		t.Fatalf("Start on a running agent does nothing: %d started=%d %v", rec.Code, len(fl.started), k.paths)
 	}
 }
 
@@ -490,7 +508,7 @@ func TestConfigIsTheDaemonsSchemaForm(t *testing.T) {
 	cap.to = `{"max_turns": 9}`
 	post("version=v17", a.postConfig)
 	lock.Close()
-	if cap.flashKind != "success" || cap.flashMsg != "Saved; the agent applies it at its next start." {
+	if cap.flashKind != "success" || cap.flashMsg != "Saved. Stop and start research to apply." {
 		t.Errorf("running: flash %q %q", cap.flashKind, cap.flashMsg)
 	}
 
@@ -517,9 +535,9 @@ func TestConfigIsTheDaemonsSchemaForm(t *testing.T) {
 // Start asks for nothing: the daemon is run as the agent's login, with its own
 // session, and writes this run's log where the status reads it back.
 func TestPostStartRunsTheLogin(t *testing.T) {
-	a, fl, cap := testApp(t)
+	a, _, fl, cap := kernelApp(t)
 	_ = a.create("research")
-	req := postForm("/agents/research/start", "")
+	req := postForm("/agents/research/start", "password=pw")
 	req.SetPathValue("handle", "research")
 	rec := httptest.NewRecorder()
 	a.postStart(rec, req)
@@ -539,9 +557,9 @@ func TestPostStartRunsTheLogin(t *testing.T) {
 	}
 }
 
-// One status shape renders everywhere the fragment does — a list row, the
-// polled fragment and the detail page — and a stopped agent carries its
-// daemon's exit error from the current run.
+// One status shape renders a list row, the page and the row's heartbeat
+// answer, its pill and its commands; a stopped agent carries its daemon's
+// exit error from the current run.
 func TestStatusShapeIsShared(t *testing.T) {
 	a, _, cap := testApp(t)
 	_ = a.create("research")
@@ -553,11 +571,11 @@ func TestStatusShapeIsShared(t *testing.T) {
 		t.Errorf("list row LastLine = %q", lv.Agents[0].LastLine)
 	}
 	req := httptest.NewRequest(http.MethodGet, "/tick", nil)
-	if h, _ := a.watch(req, "research", "running"); h != "<_agent_status>" {
+	if h, _ := a.watch(req, "research", "running"); h != "<_agent_state><_agent_commands>" {
 		t.Fatalf("watch = %q", h)
 	}
-	st := cap.data.(status)
-	if st.LastLine != want || !strings.HasPrefix(st.State, "ask.") || !st.OOB {
+	st := cap.data.(card)
+	if st.LastLine != want || !strings.HasPrefix(st.State, "stopped.") || !st.OOB || st.Pill() != "stopped" {
 		t.Errorf("heartbeat status = %+v", st)
 	}
 	if h, _ := a.watch(req, "research", st.State); h != "" {
@@ -566,10 +584,10 @@ func TestStatusShapeIsShared(t *testing.T) {
 	// The same state with another exit line is a change: the token names the
 	// line too, so a failed start between two ticks is not hidden.
 	_ = os.WriteFile(a.logPath("research"), []byte("error: another juice-agent is already serving research@testnet\n"), 0o600)
-	if h, _ := a.watch(req, "research", st.State); h != "<_agent_status>" {
+	if h, _ := a.watch(req, "research", st.State); h != "<_agent_state><_agent_commands>" {
 		t.Errorf("a new exit line must be swapped, got %q", h)
 	}
-	if st2 := cap.data.(status); st2.State == st.State || !strings.HasPrefix(st2.State, "ask.") {
+	if st2 := cap.data.(card); st2.State == st.State || !strings.HasPrefix(st2.State, "stopped.") {
 		t.Errorf("token = %q, was %q", st2.State, st.State)
 	}
 	_ = os.WriteFile(a.logPath("research"), []byte("{\"event\":\"login\"}\nerror: no session for research@testnet\n"), 0o600)
@@ -586,8 +604,11 @@ func TestStatusShapeIsShared(t *testing.T) {
 	}
 	// A running agent states no exit.
 	_ = a.start("research")
-	if st, _ := a.status(req, "research"); !st.Running || st.LastLine != "" {
+	if st, _ := a.status(req, "research"); !st.Running || st.LastLine != "" || st.Pill() != "running" {
 		t.Errorf("running status = %+v", st)
+	}
+	if (status{Running: true, Short: "no funds"}).Pill() != "no funds" || (status{Short: "no funds"}).Pill() != "stopped" {
+		t.Error("one word: stopped, else what stops it working, else running")
 	}
 }
 
@@ -599,10 +620,10 @@ func TestPostStopAndStatusFragment(t *testing.T) {
 	// The heartbeat reports running.
 	req := httptest.NewRequest(http.MethodGet, "/tick", nil)
 	_, _ = a.watch(req, "research", "stopped")
-	if cap.fragment != "_agent_status" {
+	if cap.fragment != "_agent_commands" {
 		t.Fatalf("fragment = %q", cap.fragment)
 	}
-	if sv, ok := cap.data.(status); !ok || !sv.Running || sv.State != "running" {
+	if sv, ok := cap.data.(card); !ok || !sv.Running || sv.State != "running" {
 		t.Fatalf("statusView = %+v", cap.data)
 	}
 
@@ -667,27 +688,8 @@ func TestNavIsOperatorOnly(t *testing.T) {
 		t.Fatal("an ordinary account must not be offered a host-acting app")
 	}
 	entries := a.Nav("sys", true)
-	if len(entries) != 1 || entries[0].Href != "/agents" || entries[0].Live {
+	if len(entries) != 1 || entries[0].Href != "/agents" || !entries[0].Live {
 		t.Fatalf("nav = %+v", entries)
-	}
-}
-
-func TestReturnPath(t *testing.T) {
-	cases := []struct{ referer, want string }{
-		{"", "/agents/x"},                                       // no referer → fallback
-		{"http://ui.local/agents", "/agents"},                   // from the list
-		{"http://ui.local/agents/research", "/agents/research"}, // from a detail page
-		{"http://evil.example/phish", "/agents/x"},              // off-site → fallback (no open redirect)
-		{"http://ui.local/run", "/agents/x"},                    // other local page → fallback
-	}
-	for _, c := range cases {
-		r := httptest.NewRequest(http.MethodPost, "/agents/x/stop", nil)
-		if c.referer != "" {
-			r.Header.Set("Referer", c.referer)
-		}
-		if got := returnPath(r, "/agents/x"); got != c.want {
-			t.Errorf("returnPath(referer=%q) = %q, want %q", c.referer, got, c.want)
-		}
 	}
 }
 
@@ -719,8 +721,8 @@ func TestMountGatesEveryRouteOnTheSuperuser(t *testing.T) {
 	if len(auth) != 0 {
 		t.Errorf("a host-acting app must gate on the operator, not on any session (%d routes used RequireAuth)", len(auth))
 	}
-	if len(superuser) != 12 {
-		t.Errorf("every route must be gated: %d of 12", len(superuser))
+	if len(superuser) != 13 {
+		t.Errorf("every route must be gated: %d of 13", len(superuser))
 	}
 }
 
@@ -776,7 +778,7 @@ func TestAgentAccountIsOneReadByAddress(t *testing.T) {
 	a.deps.Client, a.deps.Sessions = cl, session.NewManager(sm, cl)
 
 	h := sm.LoadAndSave(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = a.deps.Sessions.Login(r.Context(), client.Tokens{AccessToken: "t", RefreshToken: "r"}, "sys@testnet", session.Pin{})
+		_, _ = a.deps.Sessions.Login(r.Context(), client.Tokens{AccessToken: "t", RefreshToken: "r"}, "sys@testnet", session.Pin{})
 		r.SetPathValue("handle", "research")
 		a.getDetail(w, r)
 	}))
@@ -800,7 +802,7 @@ func TestAgentAccountIsOneReadByAddress(t *testing.T) {
 // lock nobody holds is a stale number; a lock that cannot be read is an error,
 // never "stopped".
 func TestRunningByTheLock(t *testing.T) {
-	a, fl, cap := testApp(t)
+	a, _, fl, cap := kernelApp(t)
 	_ = a.create("research")
 	dir, _ := a.agentDir("research")
 	lock := filepath.Join(dir, "serve.lock")
@@ -843,25 +845,6 @@ func TestRunningByTheLock(t *testing.T) {
 	a.getIndex(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/agents", nil))
 	if cap.err == nil {
 		t.Fatal("an unreadable lock must fail the page, not read as stopped")
-	}
-}
-
-// Start asks for the password only when the login has no session to serve
-// on: no credential file, or a last run ended on the daemon's own advice.
-func TestStartAsksForThePasswordWithoutASession(t *testing.T) {
-	a, _, _ := testApp(t)
-	_ = a.create("research")
-	req := httptest.NewRequest(http.MethodGet, "/agents/research", nil)
-	if st, _ := a.status(req, "research"); !st.AskPassword {
-		t.Fatal("no credential: ask")
-	}
-	_ = client.WriteCredential(a.credPath("research"), client.Tokens{AccessToken: "t"}, "P1")
-	if st, _ := a.status(req, "research"); st.AskPassword {
-		t.Fatal("a credential and a clean log: one click")
-	}
-	_ = os.WriteFile(a.logPath("research"), []byte("error: no session for research@testnet: run juice auth login research@testnet\n"), 0o600)
-	if st, _ := a.status(req, "research"); !st.AskPassword {
-		t.Fatal("the daemon said to log in: ask")
 	}
 }
 
@@ -1063,16 +1046,19 @@ func assistantApp(t *testing.T, state string) (*Agents, *fakeKernel, *fakeProgra
 	return a, k, fl, &saves
 }
 
-// The assistant is made once: the account under the kept password, the
-// session, the home, the daemon. A second pass changes nothing.
-func TestEnsureAssistantMakesAndStartsIt(t *testing.T) {
-	a, k, fl, saves := assistantApp(t, `{"assistant_password":"pw"}`)
+// The assistant is made with the password the installer asked for, once: the
+// account, the session, the home, the daemon; the password is then forgotten,
+// and a second pass changes nothing. Nothing is generated or kept.
+func TestEnsureAssistantUsesTheInstallersPassword(t *testing.T) {
+	a, k, fl, saves := assistantApp(t, "")
 	a.ensureAssistant(context.Background())
-	if len(k.created) != 1 || k.created[0] != "assistant@testnet" {
-		t.Fatalf("created = %v", k.created)
+	if len(k.created) != 0 || a.exists("assistant") {
+		t.Fatal("without the installer's password no assistant is made")
 	}
-	if !a.exists("assistant") {
-		t.Fatal("no home")
+	a.WithAssistant("pw")
+	a.ensureAssistant(context.Background())
+	if len(k.created) != 1 || k.created[0] != "assistant@testnet" || !a.exists("assistant") {
+		t.Fatalf("created = %v", k.created)
 	}
 	if _, err := os.Stat(a.credPath("assistant")); err != nil {
 		t.Fatalf("no session: %v", err)
@@ -1080,8 +1066,8 @@ func TestEnsureAssistantMakesAndStartsIt(t *testing.T) {
 	if len(fl.started) != 1 || fl.started[0].login != "assistant@testnet" {
 		t.Fatalf("started = %+v", fl.started)
 	}
-	if *saves != 0 {
-		t.Fatal("a kept password is not written again")
+	if a.assistant != "" || *saves != 0 {
+		t.Fatal("the password is used once, forgotten and written nowhere")
 	}
 	a.ensureAssistant(context.Background())
 	if len(k.created) != 1 || len(fl.started) != 1 {
@@ -1089,60 +1075,105 @@ func TestEnsureAssistantMakesAndStartsIt(t *testing.T) {
 	}
 }
 
-// Without a kept password one is made and saved before the account, and
-// the next pass uses the same one.
-func TestEnsureAssistantKeepsItsPassword(t *testing.T) {
-	a, k, _, saves := assistantApp(t, "")
-	a.ensureAssistant(context.Background())
-	if *saves != 1 || len(k.created) != 1 {
-		t.Fatalf("saves %d, created %v", *saves, k.created)
-	}
-	a.ensureAssistant(context.Background())
-	if *saves != 1 {
-		t.Fatal("the password is made once")
-	}
-}
-
-// A handle the kernel already holds is adopted only when the kept password
-// signs in; otherwise nothing is written.
+// A handle the kernel already holds is adopted only when the password signs
+// in; otherwise nothing is made.
 func TestEnsureAssistantAdoptsOnlyItsOwnAccount(t *testing.T) {
-	a, k, fl, _ := assistantApp(t, `{"assistant_password":"pw"}`)
+	a, k, fl, _ := assistantApp(t, "")
 	k.held = map[string]bool{"assistant@testnet": true}
+	a.WithAssistant("pw")
 	a.ensureAssistant(context.Background())
 	if !a.exists("assistant") || len(fl.started) != 1 {
 		t.Fatal("its own account is adopted")
 	}
-	b, k2, fl2, _ := assistantApp(t, `{"assistant_password":"not-it"}`)
+	b, k2, fl2, _ := assistantApp(t, "")
 	k2.held = map[string]bool{"assistant@testnet": true}
+	b.WithAssistant("not-it")
 	b.ensureAssistant(context.Background())
 	if b.exists("assistant") || len(fl2.started) != 0 {
 		t.Fatal("another's account is not adopted")
 	}
 }
 
-// An assistant with no program, holding a session, is started; one without a
-// session is left; one a person stopped stays stopped.
-func TestEnsureAssistantStartsAStoppedOne(t *testing.T) {
-	a, _, fl, _ := assistantApp(t, `{"assistant_password":"pw"}`)
-	if err := a.create("assistant"); err != nil {
+// The app generates no password and writes none: the one it may hold is an
+// earlier release's, which Set password replaces and forgets.
+func TestNoPasswordIsGenerated(t *testing.T) {
+	src, err := os.ReadFile("agents.go")
+	if err != nil {
 		t.Fatal(err)
 	}
-	a.ensureAssistant(context.Background())
-	if len(fl.started) != 0 {
-		t.Fatal("no session, no start")
+	for _, banned := range []string{"newPassword", "AssistantPassword =", "AssistantPassword:"} {
+		if strings.Contains(string(src), banned) {
+			t.Errorf("agents.go makes or keeps a password: %q", banned)
+		}
 	}
-	if err := a.signIn(context.Background(), "assistant", "pw"); err != nil {
-		t.Fatal(err)
+}
+
+// Set password replaces a password an earlier release kept: it signs in with
+// the kept one, changes it to the one typed twice, ends that session and
+// forgets the kept one; refused when the two differ, and offered only where a
+// password is kept.
+func TestSetPasswordReplacesAKeptOne(t *testing.T) {
+	a, k, _, saves := assistantApp(t, `{"assistant_password":"pw"}`)
+	_ = a.create("assistant")
+	var changed string
+	k.onUpdate = func(body map[string]string) { changed = body["current_password"] + ">" + body["password"] }
+	post := func(handle, body string) {
+		req := postForm("/agents/"+handle+"/password", body)
+		req.SetPathValue("handle", handle)
+		a.postPassword(httptest.NewRecorder(), req)
 	}
-	a.ensureAssistant(context.Background())
-	if len(fl.started) != 1 {
-		t.Fatal("an assistant with a session is started")
+	cap := a.deps.RenderPage
+	_ = cap
+	post("assistant", "password=newpass1&confirm_password=other")
+	if changed != "" || *saves != 0 {
+		t.Fatal("two different passwords change nothing")
 	}
-	_ = fl.Stop(programName("assistant@testnet"))
-	a.ensureAssistant(context.Background())
-	if fl.running("assistant@testnet") || len(fl.started) != 1 {
-		t.Fatal("a stopped assistant stays stopped")
+	post("assistant", "password=newpass1&confirm_password=newpass1")
+	if changed != "pw>newpass1" || *saves != 1 || a.heldPassword("assistant") != "" {
+		t.Fatalf("changed %q, saves %d, held %q", changed, *saves, a.heldPassword("assistant"))
 	}
+	if !slices.Contains(k.paths, "POST /v1/auth/logout") {
+		t.Error("the session it signed in with is ended")
+	}
+	_ = a.create("research")
+	k.paths = nil
+	post("research", "password=newpass1&confirm_password=newpass1")
+	if len(k.paths) != 0 {
+		t.Error("an agent with no kept password is offered no Set password")
+	}
+}
+
+// What waits on an agent that its program cannot do is counted with its own
+// session: requesters awaiting approval and waiting tasks addressed to it that
+// take no input; a delivery it answers, another's task and an agent with no
+// session count nothing. The menu's badge is their total, the operator's alone.
+func TestDecisionsAreWhatTheProgramCannotDo(t *testing.T) {
+	a, k, _, cap := kernelApp(t)
+	_ = a.create("research")
+	if a.self(context.Background(), "research") != (self{}) {
+		t.Fatal("no session counts none")
+	}
+	_ = client.WriteCredential(a.credPath("research"), client.Tokens{AccessToken: "AT", RefreshToken: "RT"}, "P1")
+	k.requesters = `[{"requester":{"address":"chat@beta"},"status":"pending"},{"requester":{"address":"chat@alpha"},"status":"approved"}]`
+	k.tasks = `[{"id":"1","status":"waiting","required_caller":{"address":"research@testnet"},"allowed_input":{"type":"object","properties":{}}},
+		{"id":"2","status":"waiting","required_caller":{"address":"research@testnet"},"allowed_input":{"type":"object","properties":{"answer":{"type":"string"}}}},
+		{"id":"3","status":"waiting","required_caller":{"address":"other@testnet"},"allowed_input":{"type":"object","properties":{}}},
+		{"id":"4","status":"waiting","required_caller":{"address":"research@testnet"},"allowed_input":{"type":"object"}}]`
+	if got := a.self(context.Background(), "research"); got.Decisions != 2 || got.LastActive != "2026-11-17T10:00:00Z" {
+		t.Fatalf("self = %+v, want a pending requester and an invitation, and the newest transaction's start", got)
+	}
+	h, _ := a.watchBadge(httptest.NewRequest(http.MethodGet, "/tick", nil), "badge", "")
+	if !strings.Contains(string(h), ">2<") {
+		t.Errorf("the menu's badge: %s", h)
+	}
+	if h, _ := a.watchBadge(httptest.NewRequest(http.MethodGet, "/tick", nil), "badge", "2"); h != "" {
+		t.Error("an unchanged count is not swapped")
+	}
+	a.deps.Superuser = func(*http.Request) bool { return false }
+	if h, _ := a.watchBadge(httptest.NewRequest(http.MethodGet, "/tick", nil), "badge", ""); h != "" {
+		t.Error("the operator's alone")
+	}
+	_ = cap
 }
 
 // fundKernel is a kernel for funding: the agent's account at balance, the
@@ -1216,7 +1247,7 @@ func fundApp(t *testing.T) (*Agents, *fundKernel, *capture, func(*http.Request, 
 	a.deps.Money = func(n int64) string { return fmt.Sprint(n, " u") }
 	serve := func(r *http.Request, h http.HandlerFunc) {
 		sm.LoadAndSave(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			_ = a.deps.Sessions.Login(r.Context(), client.Tokens{AccessToken: "t", RefreshToken: "r"}, "sys@testnet", session.Pin{})
+			_, _ = a.deps.Sessions.Login(r.Context(), client.Tokens{AccessToken: "t", RefreshToken: "r"}, "sys@testnet", session.Pin{})
 			r.SetPathValue("handle", "research")
 			h(w, r)
 		})).ServeHTTP(httptest.NewRecorder(), r)
@@ -1233,12 +1264,12 @@ func TestFundIsReviewThenOnePinnedTransfer(t *testing.T) {
 	a, k, cap, serve := fundApp(t)
 	for _, bad := range []string{"", "0", "-5", "1.5x"} {
 		serve(postForm("/agents/research/fund/review", "amount="+bad), a.postFundReview)
-		if v, _ := cap.data.(detailView); cap.status != http.StatusUnprocessableEntity || v.OpenForm != "fund" || v.Fund.Error == "" {
+		if v := opened(cap); cap.status != http.StatusUnprocessableEntity || v.OpenForm != "fund" || v.Fund.Error == "" {
 			t.Errorf("%q must be refused in the Fund dialog: %d %+v", bad, cap.status, v.Fund)
 		}
 	}
 	serve(postForm("/agents/research/fund/review", "amount=100000"), a.postFundReview)
-	v, _ := cap.data.(detailView)
+	v := opened(cap)
 	if v.OpenForm != "fund-review" || v.Fund.Amount != 100000 || v.Fund.Price != 50 || v.Fund.Total() != 100050 || v.Fund.Quote != "QT50" || v.Fund.Key == "" {
 		t.Fatalf("review: %+v", v)
 	}
@@ -1251,19 +1282,19 @@ func TestFundIsReviewThenOnePinnedTransfer(t *testing.T) {
 	if len(k.runs) != 1 || k.runs[0].Action != client.Transfer || k.runs[0].ExternalKey != key || string(k.runs[0].Args) != `{"amount":100000,"target":"research@testnet"}` {
 		t.Fatalf("one pinned, keyed transfer to the agent: %+v", k.runs)
 	}
-	if cap.flashKind != "success" || cap.flashTo != "/agents/research" || cap.flashMsg != "Funded 100000 u · research@testnet." {
+	if cap.flashKind != "success" || cap.flashTo != "/agents" || cap.flashMsg != "Funded 100000 u · research@testnet." {
 		t.Errorf("funded: %q %q %q", cap.flashKind, cap.flashTo, cap.flashMsg)
 	}
 	k.mu.Lock()
 	k.transfer = 60
 	k.mu.Unlock()
 	serve(postForm("/agents/research/fund", form), a.postFund)
-	v, _ = cap.data.(detailView)
+	v = opened(cap)
 	if len(k.runs) != 1 || v.OpenForm != "fund-review" || v.Fund.Price != 60 || v.Fund.Quote != "QT60" || v.Fund.Key == key || v.Fund.Key == "" {
 		t.Errorf("moved terms are reviewed again under a new key: %+v %+v", v.Fund, k.runs)
 	}
 	serve(postForm("/agents/research/fund", "amount=100000"), a.postFund)
-	if len(k.runs) != 1 || cap.flashTo != "/agents/research?form=fund" {
+	if len(k.runs) != 1 || cap.flashTo != "/agents?form=fund&handle=research" {
 		t.Errorf("a confirm without its review runs nothing: %+v %q", k.runs, cap.flashTo)
 	}
 }
@@ -1336,7 +1367,7 @@ func TestAnUnknownFundingKeepsItsKey(t *testing.T) {
 		k.answer = answer
 		k.mu.Unlock()
 		serve(postForm("/agents/research/fund", form), a.postFund)
-		v, _ := cap.data.(detailView)
+		v := opened(cap)
 		if v.OpenForm != "fund-review" || v.Fund.Key != "K1" || v.Fund.Quote != "QT50" || v.Fund.Amount != 100000 || v.Fund.Price != 50 || v.Fund.Error == "" {
 			t.Errorf("%s: the confirm again, same key: %+v", answer, v.Fund)
 		}
@@ -1349,7 +1380,252 @@ func TestAnUnknownFundingKeepsItsKey(t *testing.T) {
 	k.answer = `402 {"code":"insufficient_funds","error":"your balance is 0.00 fUSD"}`
 	k.mu.Unlock()
 	serve(postForm("/agents/research/fund", "amount=100000&quote=QT50&price=50&key=K2"), a.postFund)
-	if v, _ := cap.data.(detailView); v.OpenForm != "fund" || v.Fund.Key != "" || v.Fund.Error == "" {
+	if v := opened(cap); v.OpenForm != "fund" || v.Fund.Key != "" || v.Fund.Error == "" {
 		t.Errorf("a refusal reopens the amount, the key gone: %+v", v.Fund)
+	}
+}
+
+// opened is the agent whose dialog a command given in the fleet's list left
+// open over the list.
+func opened(cap *capture) card {
+	lv, _ := cap.data.(listView)
+	for _, c := range lv.Agents {
+		if c.OpenForm != "" {
+			return c
+		}
+	}
+	return card{}
+}
+
+// fakeKernel answers the five routes a sign-in and an account creation use. The
+// password it accepts is "pw"; it records the handles created and every path
+// asked, and answers /v1/me with the address it was told to. A handle starting
+// with "taken", or listed in held, already exists.
+type fakeKernel struct {
+	srv     *httptest.Server
+	mu      sync.Mutex
+	created []string
+	paths   []string
+	held    map[string]bool
+	me      string
+	health  string
+	// What the agent's own session reads, and what a password change sends.
+	requesters, tasks string
+	onUpdate          func(map[string]string)
+}
+
+func newKernel(t *testing.T) *fakeKernel {
+	t.Helper()
+	k := &fakeKernel{me: "research@testnet",
+		health: `{"status":"ok","handle":"testnet","public_key":"KEY","network":"play","network_fingerprint":"FP","decimals":6,"symbol":"fUSD"}`}
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(k.health)) })
+	mux.HandleFunc("POST /v1/users", func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]string
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		k.mu.Lock()
+		dup := strings.HasPrefix(body["handle"], "taken") || k.held[body["handle"]]
+		k.created = append(k.created, body["handle"])
+		k.mu.Unlock()
+		if dup {
+			http.Error(w, `{"error":"account: already exists"}`, http.StatusUnprocessableEntity)
+			return
+		}
+		w.Write([]byte(`{"id":"U1","address":{"address":"` + body["handle"] + `"}}`))
+	})
+	mux.HandleFunc("POST /v1/auth/authorize", func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]string
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if body["password"] != "pw" {
+			http.Error(w, `{"error":"invalid credentials"}`, http.StatusUnauthorized)
+			return
+		}
+		w.Write([]byte(`{"redirect":"?code=C"}`))
+	})
+	mux.HandleFunc("POST /v1/auth/token", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"access_token":"AT","refresh_token":"RT"}`))
+	})
+	mux.HandleFunc("GET /v1/me", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"id":"P1","address":{"address":"` + k.me + `"}}`))
+	})
+	mux.HandleFunc("PUT /v1/me", func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]string
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if k.onUpdate != nil {
+			k.onUpdate(body)
+		}
+		w.Write([]byte(`{"id":"P1","address":{"address":"` + k.me + `"}}`))
+	})
+	mux.HandleFunc("POST /v1/auth/logout", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNoContent) })
+	mux.HandleFunc("GET /v1/me/requesters", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(or(k.requesters, "[]"))) })
+	mux.HandleFunc("GET /v1/transactions", func(w http.ResponseWriter, r *http.Request) {
+		if k.requesters == "" { // an agent with nothing set up has done nothing
+			w.Write([]byte(`[]`))
+			return
+		}
+		w.Write([]byte(`[{"id":"T2","started_at":"2026-11-17T10:00:00Z"},{"id":"T1","started_at":"2026-11-16T10:00:00Z"}]`))
+	})
+	mux.HandleFunc("GET /v1/tasks", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("offset") != "" && r.URL.Query().Get("offset") != "0" {
+			w.Write([]byte(`[]`))
+			return
+		}
+		w.Write([]byte(or(k.tasks, "[]")))
+	})
+	k.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		k.mu.Lock()
+		k.paths = append(k.paths, r.Method+" "+r.URL.Path)
+		k.mu.Unlock()
+		mux.ServeHTTP(w, r)
+	}))
+	t.Cleanup(k.srv.Close)
+	return k
+}
+
+// kernelApp is testApp with a fake kernel and a client directory.
+func kernelApp(t *testing.T) (*Agents, *fakeKernel, *fakePrograms, *capture) {
+	t.Helper()
+	a, fl, cap := testApp(t)
+	k := newKernel(t)
+	a.client = filepath.Join(t.TempDir(), "client")
+	a.deps.Client = client.New(k.srv.URL, nil)
+	return a, k, fl, cap
+}
+
+func readJSON(t *testing.T, path string) map[string]any {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(b, &m); err != nil {
+		t.Fatal(err)
+	}
+	return m
+}
+
+func kernelRecord(t *testing.T, a *Agents) map[string]any {
+	t.Helper()
+	return readJSON(t, filepath.Join(a.client, "config.json"))["kernels"].(map[string]any)["testnet"].(map[string]any)
+}
+
+func or(a, b string) string {
+	if a != "" {
+		return a
+	}
+	return b
+}
+
+// An agent is a row of the fleet's record list: its handle linking to its
+// page and its one pill, its balance and when it last acted, each labelled for
+// the stacked layout, and its commands in one order (Start or Stop, an icon;
+// Fund; Sign in or Switch with the count of decisions), with one set of
+// dialogs per agent, their ids its own. Nothing else: no tile, no facts line.
+// Its page states its name, its pill and the facts the row leaves out, then
+// Settings, and holds none of the row's commands.
+func TestAnAgentIsARowAndItsPageItsFacts(t *testing.T) {
+	r, err := server.NewRenderer(nil, New().Templates())
+	if err != nil {
+		t.Fatal(err)
+	}
+	render := func(page string, p server.Page) string {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		if err := r.Render(rec, http.StatusOK, page, p); err != nil {
+			t.Fatalf("%s: %v", page, err)
+		}
+		return rec.Body.String()
+	}
+	acct := &client.AdminUser{Address: client.Party{Address: "helper@alpha", Principal: "helper@alpha"}, Available: 4990000, Locked: 20000}
+	form := server.BuildForm(json.RawMessage(`{"type":"object","properties":{"max_turns":{"type":"integer"}}}`))
+	ready := readiness{Reason: client.Party{Address: "sys@alpha/llm/chat"}, Call: 1200, Budget: 50000}
+	running := card{status: status{Handle: "helper", Running: true, State: "running", Short: "no funds", CSRF: "<input name=csrf>", Ready: ready},
+		Account: acct, Self: self{Decisions: 2, LastActive: "2026-11-17T10:00:00Z"}}
+	stopped := card{status: status{Handle: "scout", State: "stopped", LastLine: "error: x", CSRF: "<input name=csrf>"}, Account: &client.AdminUser{Address: client.Party{Address: "scout@alpha"}}}
+	list := render("agents", server.Page{Me: "sys@alpha", Data: listView{Agents: []card{running, stopped}}})
+	for _, want := range []string{`<table class="records">`, `<th>Agent</th><th class="money">Balance</th><th>Active</th><th></th>`,
+		`<td><a class="ref mono" href="/agents/helper">helper</a> <span id="agent-state-helper"><input type="hidden" name="watch" value="agent:helper:running"><span class="pill status-danger">no funds</span></span></td>`,
+		`<td class="money" data-label="Balance">`, `<td data-label="Active">`, `<div class="cluster" id="agent-commands-helper">`,
+		`class="btn-icon btn-danger" type="submit" aria-label="Stop helper"`, `action="/agents/helper/stop"`,
+		`<a class="btn" href="/agents?form=fund&handle=helper" data-modal="form-fund-helper">Fund</a>`,
+		`<a class="btn" href="?form=signin&handle=helper" data-modal="signin" data-fill="helper">Sign in<span class="badge" aria-label="Waiting">2</span></a>`,
+		`id="form-start-helper"`, `id="form-fund-helper"`,
+		`<a class="btn-icon" href="/agents?form=start&handle=scout" data-modal="form-start-scout" aria-label="Start scout"`, `<td data-label="Active">never</td>`, "New agent"} {
+		if !strings.Contains(list, want) {
+			t.Errorf("the list lacks %q", want)
+		}
+	}
+	for _, not := range []string{"tile", "per job", "error: x", `name="back"`, "form-switch", "agent-card"} {
+		if strings.Contains(list, not) {
+			t.Errorf("the list has %q", not)
+		}
+	}
+	if strings.Count(list, `id="form-start-helper"`) != 1 || strings.Count(list, `<tr>`) != 3 {
+		t.Error("one row and one set of dialogs per agent")
+	}
+	page := render("agent", server.Page{Me: "sys@alpha", Accounts: []string{"sys@alpha"}, CSRFField: "<input name=csrf>",
+		Data: detailView{card: running, Held: true, Agent: "\nYou are concise.\nMore.", Config: form}})
+	for _, want := range []string{`<h1><span class="ref mono">helper</span> <span class="pill status-danger">no funds</span></h1>`,
+		`<dt>Balance</dt>`, `<dt>Parked</dt>`, `<dt>Model</dt>`, " a call", `<dt>Budget</dt>`, " per job", `<dt>Active</dt>`,
+		`<h2>Settings</h2>`, `<span>instructions</span><span class="detail">You are concise.</span>`,
+		`data-modal="form-config"`, `<dialog id="form-config"`, `<span>password</span>`} {
+		if !strings.Contains(page, want) {
+			t.Errorf("the page lacks %q", want)
+		}
+	}
+	for _, not := range []string{"form-start-helper", "form-fund-helper", `action="/agents/helper/stop"`, `data-fill="helper"`, "Delete agent", `name="watch" value="agent:`} {
+		if strings.Contains(page, not) {
+			t.Errorf("the page has %q", not)
+		}
+	}
+	held := running
+	held.Accounts = []string{"sys@alpha", "helper@alpha"}
+	list = render("agents", server.Page{Me: "sys@alpha", CSRFField: "<input name=csrf>", Data: listView{Agents: []card{held}}})
+	if !strings.Contains(list, `action="/switch"`) || strings.Contains(list, `data-fill="helper"`) {
+		t.Error("an account the session holds is one click away, and asks no password")
+	}
+	stoppedPage := render("agent", server.Page{Me: "sys@alpha", CSRFField: "<input name=csrf>", Data: detailView{card: stopped, Config: form}})
+	if !strings.Contains(stoppedPage, "<dt>Exit</dt>") || !strings.Contains(stoppedPage, "error: x") || !strings.Contains(stoppedPage, `data-confirm="Delete scout, leaving `) {
+		t.Error("a stopped agent's page states its exit line and offers delete, naming the balance left")
+	}
+	bare := render("agents", server.Page{Me: "sys@alpha", Data: listView{Agents: []card{{status: status{Handle: "x", State: "stopped"}}}}})
+	if strings.Contains(bare, `data-fill="x"`) || strings.Contains(bare, "form-fund-x") {
+		t.Error("a home with no account offers no sign-in and no fund")
+	}
+}
+
+// A command is given in the fleet's list and answers there: a refusal
+// re-renders the list with that agent's dialog open and its reason, a success
+// returns to it; without script ?form=&handle= opens that agent's dialog.
+func TestACommandAnswersInTheList(t *testing.T) {
+	a, _, fl, cap := kernelApp(t)
+	_ = a.create("research")
+	post := func(path, body string) *httptest.ResponseRecorder {
+		req := postForm(path, body)
+		req.SetPathValue("handle", "research")
+		rec := httptest.NewRecorder()
+		switch {
+		case strings.HasSuffix(path, "/start"):
+			a.postStart(rec, req)
+		case strings.HasSuffix(path, "/stop"):
+			a.postStop(rec, req)
+		}
+		return rec
+	}
+	post("/agents/research/start", "password=nope")
+	if c := opened(cap); cap.page != "agents" || cap.status != http.StatusUnprocessableEntity || c.Handle != "research" ||
+		c.OpenForm != "start" || c.Error != "Password is incorrect." {
+		t.Fatalf("a refusal in the list: %s %d %+v", cap.page, cap.status, cap.data)
+	}
+	if rec := post("/agents/research/start", "password=pw"); rec.Header().Get("Location") != "/agents" || len(fl.started) != 1 {
+		t.Fatalf("a success returns to the list: %q", rec.Header().Get("Location"))
+	}
+	if rec := post("/agents/research/stop", ""); rec.Header().Get("Location") != "/agents" {
+		t.Fatalf("Stop returns to the list: %q", rec.Header().Get("Location"))
+	}
+	a.getIndex(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/agents?form=fund&handle=research", nil))
+	if c := opened(cap); c.Handle != "research" || c.OpenForm != "fund" {
+		t.Fatalf("without script the link opens that agent's dialog: %+v", cap.data)
 	}
 }

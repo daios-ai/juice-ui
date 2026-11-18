@@ -1118,7 +1118,7 @@ func renderPeersPage(t *testing.T, peers []client.Peer, showSuspended bool) stri
 	return rec.Body.String()
 }
 
-// The network page is one list in the action row's grammar: this kernel, then
+// The network page is one record list: this kernel, then
 // its counterparties, then the known network, each class in the kernel's own
 // order and marked by a pill; a known kernel carries no mark (§6.6). It is
 // never polled, and the Show/Hide-suspended toggle drives ?all=1.
@@ -1148,7 +1148,7 @@ func TestKernelListOrderAndPills(t *testing.T) {
 	}
 	// This kernel's title is its own handle; its row is this page, so it links
 	// nowhere.
-	if !strings.Contains(body, `<span class="action-title"><span class="name mono">me</span></span>`) || strings.Contains(body, `data-href="/admin/peers/PK"`) {
+	if !strings.Contains(body, `<td><span class="name mono">me</span> <span class="pill">this kernel</span></td>`) || strings.Contains(body, `data-href="/admin/peers/PK"`) {
 		t.Errorf("the current row must title its handle and link nowhere: %s", body)
 	}
 	if strings.Contains(body, `hx-get="/admin/peers`) {
@@ -1193,8 +1193,10 @@ func TestNetworkFiguresAndGap(t *testing.T) {
 	}
 }
 
-// A named peer row is a results row: the whole row opens the peer's page, where
-// it is named and suspended, and the row itself carries no verb (§5.5).
+// A named peer row opens the peer's page, where it is named and suspended,
+// and carries no verb; a suspended peer says so by its pill; a known kernel
+// states the size of its catalog and when an exchange last succeeded —
+// catalog freshness, not liveness, so never a status pill (§6.6).
 func TestNamedRowsCarryNoVerbs(t *testing.T) {
 	body := renderPeersPage(t, []client.Peer{
 		{Petname: "active", PublicKey: "KF", Traded: true},
@@ -1202,80 +1204,45 @@ func TestNamedRowsCarryNoVerbs(t *testing.T) {
 		{Nickname: "twin", PublicKey: "KT1", Actions: 13, LastSeen: "2026-08-06T00:04:34Z"},
 	}, true)
 	for _, key := range []string{"KF", "KG", "KT1"} {
-		if !strings.Contains(body, `class="action-row rowable`) || !strings.Contains(body, `data-href="/admin/peers/`+key+`"`) {
+		if !strings.Contains(body, `<tr class="rowable" tabindex="-1" data-href="/admin/peers/`+key+`">`) {
 			t.Errorf("row %s must open the peer's page: %s", key, body)
 		}
 	}
-	for _, gone := range []string{"/admin/peers/suspend", "/admin/peers/unsuspend", "?form=admin-rename", "unsubscribe", "fund_key"} {
+	for _, gone := range []string{"/admin/peers/suspend", "/admin/peers/unsuspend", "unsubscribe", "fund_key", "inactive"} {
 		if strings.Contains(body, gone) {
-			t.Errorf("a row carries no verb; found %q", gone)
+			t.Errorf("a row carries no verb and is never faded; found %q", gone)
 		}
 	}
-	if !strings.Contains(body, `class="action-row rowable inactive"`) || !strings.Contains(body, ">suspended<") {
-		t.Errorf("a suspended peer is dimmed and marked: %s", body)
+	if !strings.Contains(body, `<span class="pill status-danger">suspended</span>`) {
+		t.Errorf("a suspended peer is marked: %s", body)
 	}
-	// A known kernel states its catalog; last_seen is catalog freshness, not
-	// liveness: a strip slot with a tooltip, never a status pill.
-	if !strings.Contains(body, `#layers"/></svg> 13<`) || !strings.Contains(body, `title="Catalog verified`) || strings.Contains(body, "status-credited") {
-		t.Errorf("a known row states its catalog and contact cache in the strip: %s", body)
+	if !strings.Contains(body, `<td class="num" data-label="Actions">13</td>`) || strings.Count(body, `<td data-label="Seen">never</td>`) != 2 || strings.Contains(body, "status-credited") {
+		t.Errorf("a known row states its catalog and when it was last seen: %s", body)
+	}
+	if !strings.Contains(body, `<td class="num" data-label="Actions"></td>`) {
+		t.Error("this kernel's row states no catalog")
 	}
 }
 
-// The key renders in one spelling (§6.6): client.ShortKey as the title when it
-// is the label, else on the ref line; never both, and never a second
-// truncation. A nickname is the label marked ~, never in parentheses.
-func TestKeyRendersInOneSpelling(t *testing.T) {
+// A row spells a peer's key only as its name, when no petname or nickname
+// labels it, with its copy control; a peer a nickname labels is ~nickname
+// with the copy of its key, as a key is its identity; a bound peer is its
+// petname alone. The key in full is its page's.
+func TestARowSpellsTheKeyOnlyAsItsName(t *testing.T) {
 	const key = "lHynnkVtXrzrfAHCPgrjzctyjQqkehrUz0BZp7Pxnmw"
 	short := client.ShortKey(key)
 	unbound := renderPeersPage(t, []client.Peer{{PublicKey: key}}, false)
-	if n := strings.Count(unbound, short); n != 1 {
-		t.Errorf("an unbound row spells its key once, got %d: %s", n, unbound)
-	}
-	if strings.Contains(unbound, `class="action-ref fingerprint"><span class="name mono" title="`+key+`"`) {
-		t.Errorf("a row whose label is its key has no ref line: %s", unbound)
+	if strings.Count(unbound, short) != 1 || strings.Count(unbound, `data-copy="`+key+`"`) != 1 {
+		t.Errorf("an unbound row spells its key once, with its copy: %s", unbound)
 	}
 	claimed := renderPeersPage(t, []client.Peer{{Nickname: "TitanPlus", PublicKey: key}}, false)
-	if !strings.Contains(claimed, `>~TitanPlus</span></a>`) || strings.Contains(claimed, "(TitanPlus)") ||
-		!strings.Contains(claimed, `<p class="action-ref fingerprint"><span class="name mono" title="`+key+`">`+short+`</span> <button`) || strings.Count(claimed, short) != 1 {
-		t.Errorf("a row a nickname labels shows ~TitanPlus and its key once on the ref line: %s", claimed)
+	if !strings.Contains(claimed, `>~TitanPlus</span></a>`) || strings.Contains(claimed, "(TitanPlus)") || strings.Contains(claimed, ">"+short+"<") ||
+		strings.Count(claimed, `data-copy="`+key+`"`) != 1 {
+		t.Errorf("a row a nickname labels shows ~TitanPlus and the copy of its key: %s", claimed)
 	}
 	bound := renderPeersPage(t, []client.Peer{{Petname: "titan", PublicKey: key}}, false)
-	if !strings.Contains(bound, `<p class="action-ref fingerprint"><span class="name mono" title="`+key+`">`+short+`</span> <button`) {
-		t.Errorf("a bound row's ref line is the one key spelling: %s", bound)
-	}
-	// The whole key is yielded by the copy control, in both forms of the row.
-	for _, body := range []string{unbound, claimed, bound} {
-		if strings.Count(body, `data-copy="`+key+`"`) != 1 {
-			t.Errorf("a row carries its whole key in one copy control: %s", body)
-		}
-	}
-}
-
-// Every peer row ends with the kernel strip: three slots in one order, a muted
-// none where a slot has nothing, the separator between slots and never before
-// the first; this kernel's row, built from identity, carries none.
-func TestKernelStripSlots(t *testing.T) {
-	body := renderPeersPage(t, []client.Peer{
-		{Petname: "pb", PublicKey: "KB", Traded: true, Actions: 4, LastSeen: "2026-08-04T09:54:01Z", LastContactFailedAt: "2026-08-04T10:00:00Z"},
-		{Petname: "kc", PublicKey: "KC", Actions: 0},
-	}, false)
-	if n := strings.Count(body, `class="stat-strip"`); n != 2 {
-		t.Fatalf("one strip per peer row and none on this kernel's, got %d: %s", n, body)
-	}
-	last := -1
-	for _, slot := range []string{`title="Public actions in its catalog"`, `title="Catalog verified`, `title="Last contact failed"`, `title="Public actions in its catalog"`, `title="Catalog never verified"`, `title="No contact has failed"`} {
-		i := strings.Index(body[last+1:], slot)
-		if i < 0 {
-			t.Fatalf("slot %s missing or out of order: %s", slot, body)
-		}
-		last += 1 + i
-	}
-	if !strings.Contains(body, `<span class="muted" title="Catalog never verified">`) {
-		t.Error("an empty slot renders a muted none")
-	}
-	if strings.Contains(body, `"stat-strip">
-  ·`) || strings.Contains(body, "catalog verified") {
-		t.Errorf("no leading separator and no prose facts: %s", body)
+	if strings.Contains(bound, short) || strings.Contains(bound, `data-copy="`+key+`"`) {
+		t.Errorf("a bound row is its petname alone: %s", bound)
 	}
 }
 
@@ -1420,7 +1387,8 @@ func TestInspectOffersSuspendOnEveryKernel(t *testing.T) {
 	if !strings.Contains(known, `action="/admin/peers/suspend"`) || strings.Contains(known, ">party<") {
 		t.Errorf("a discovered kernel is not a party but can be suspended: %s", known)
 	}
-	if strings.Contains(party+frozen+known, "account") {
+	stamp := regexp.MustCompile(`name="juice_account"|<meta name="account"`)
+	if strings.Contains(stamp.ReplaceAllString(party+frozen+known, ""), "account") {
 		t.Error("a peer holds no account here; the page must not say one")
 	}
 }
@@ -1484,8 +1452,8 @@ func TestInspectOfflineStranger(t *testing.T) {
 // be a fabrication.
 func TestPeerCardCarriesContactNotMoney(t *testing.T) {
 	body := renderPeersPage(t, []client.Peer{{Petname: "peerb", PublicKey: "KEY", Traded: true, LastSeen: "2026-07-12T00:00:00Z"}}, false)
-	if !strings.Contains(body, `title="Catalog verified`) {
-		t.Errorf("counterparty card missing the contact cache: %s", body)
+	if !strings.Contains(body, `<td data-label="Seen">`) || strings.Contains(body, `<td data-label="Seen">never</td>`) {
+		t.Errorf("counterparty row missing when it was last seen: %s", body)
 	}
 	for _, gone := range []string{"our credit there", "owes us", "we owe them", "position"} {
 		if strings.Contains(body, gone) {

@@ -147,6 +147,103 @@ func TestTablesAreScrollable(t *testing.T) {
 	}
 }
 
+// A record list (table.records: users, agents, kernels) stacks on a narrow
+// screen, each labelled cell a line of its label and its value (grammar
+// §5.5), so its contract is held here: a header row, and every body row, in
+// the table or in the row partial its body calls, has its record's name and
+// state first, unlabelled, its commands last (td.row-actions), and a
+// data-label on every cell between.
+func TestRecordListsAreLabelled(t *testing.T) {
+	core, _ := fs.Glob(tmplFS, "templates/*.html")
+	outside, _ := outsideTemplates()
+	srcs := map[string]string{}
+	defs := map[string]string{}
+	defineRe := regexp.MustCompile(`\{\{define "(\w+)"\}\}`)
+	for _, f := range append(core, outside...) {
+		b, err := fs.ReadFile(tmplFS, f)
+		if err != nil {
+			b, err = os.ReadFile(f)
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		src := string(b)
+		srcs[f] = src
+		at := defineRe.FindAllStringSubmatchIndex(src, -1)
+		for i, m := range at {
+			end := len(src)
+			if i+1 < len(at) {
+				end = at[i+1][0]
+			}
+			defs[src[m[2]:m[3]]] = src[m[1]:end]
+		}
+	}
+	tableRe := regexp.MustCompile(`(?s)<table class="records">(.*?)</table>`)
+	bodyRe := regexp.MustCompile(`(?s)<tbody>(.*?)</tbody>`)
+	callRe := regexp.MustCompile(`\{\{template "(_\w+_row)"`)
+	rowRe := regexp.MustCompile(`(?s)<tr\b[^>]*>(.*?)</tr>`)
+	cellRe := regexp.MustCompile(`<td\b([^>]*)>`)
+	rows := 0
+	for f, src := range srcs {
+		for _, m := range tableRe.FindAllStringSubmatch(src, -1) {
+			if !strings.Contains(m[1], "<thead>") {
+				t.Errorf("%s: a record list has a header row", f)
+			}
+			body := bodyRe.FindStringSubmatch(m[1])
+			if body == nil {
+				t.Errorf("%s: a record list has a body", f)
+				continue
+			}
+			text := body[1]
+			for _, c := range callRe.FindAllStringSubmatch(text, -1) {
+				text += defs[c[1]]
+			}
+			for _, r := range rowRe.FindAllStringSubmatch(text, -1) {
+				cells := cellRe.FindAllStringSubmatch(r[1], -1)
+				rows++
+				if len(cells) < 2 {
+					t.Errorf("%s: a record row has a name and commands: %s", f, r[0])
+					continue
+				}
+				if strings.Contains(cells[0][1], "data-label") {
+					t.Errorf("%s: a record's first cell is its name, unlabelled: %s", f, cells[0][0])
+				}
+				if !strings.Contains(cells[len(cells)-1][1], `class="row-actions"`) {
+					t.Errorf("%s: a record's last cell is its commands: %s", f, cells[len(cells)-1][0])
+				}
+				for _, c := range cells[1 : len(cells)-1] {
+					if !strings.Contains(c[1], "data-label=") {
+						t.Errorf("%s: a record's cell is labelled for the stacked layout: %s", f, c[0])
+					}
+				}
+			}
+		}
+	}
+	if rows < 3 {
+		t.Errorf("only %d record rows checked: users, agents and kernels are record lists", rows)
+	}
+}
+
+// A stacked record list keeps its header row for assistive technology,
+// hidden from sight only, and wraps a record's name, so a long handle never
+// scrolls the record sideways on a phone.
+func TestStackedRecordsKeepHeadersAndWrapNames(t *testing.T) {
+	b, err := staticFS.ReadFile("static/app.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	css := string(b)
+	if strings.Contains(css, "table.records thead { display: none") {
+		t.Error("app.css: a stacked record list's header row is hidden from sight only, never display: none")
+	}
+	if !strings.Contains(css, "table.records thead { position: absolute;") {
+		t.Error("app.css: a stacked record list's header row is visually hidden (.sr-only's declarations)")
+	}
+	if !strings.Contains(css, "table.records td:first-child { overflow-wrap: anywhere; }") {
+		t.Error("app.css: a stacked record's name wraps")
+	}
+}
+
 // A command in flight is shown and held by one rule (§5.1), app.js's busy
 // block, holding the command's group by the hold Fill uses too: no template
 // disables its own button or dims its own row while it runs, an hx-indicator names only the progress bar of a long call, and a
@@ -917,7 +1014,7 @@ func TestAFormsActionIsItsPrimary(t *testing.T) {
 	outside, _ := outsideTemplates()
 	formRe := regexp.MustCompile(`(?s)<form\b[^>]*>(.*?)</form>`)
 	buttonRe := regexp.MustCompile(`<button\b([^>]*)>`)
-	fieldRe := regexp.MustCompile(`<input\b[^>]*>|<select\b|<textarea\b|\{\{template "_form_fields"`)
+	fieldRe := regexp.MustCompile(`<input\b[^>]*>|<select\b|<textarea\b|\{\{template "_\w*fields"`)
 	notField := regexp.MustCompile(`type="(hidden|checkbox)"`)
 	solid := regexp.MustCompile(`btn-(primary|money|danger)\b`)
 	checked := 0

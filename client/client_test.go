@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -181,7 +182,7 @@ func TestAuthorizeParsesCode(t *testing.T) {
 	f := newFake()
 	defer f.close()
 	f.reply = `{"redirect":"?code=THECODE"}`
-	code, err := f.client().Authorize(context.Background(), "alice", "pw", "challenge")
+	code, err := f.client().authorize(context.Background(), "alice", "pw", "challenge")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -204,9 +205,47 @@ func TestAuthorizeFullURLRedirect(t *testing.T) {
 	f := newFake()
 	defer f.close()
 	f.reply = `{"redirect":"http://localhost:8080/cb?code=XYZ&state=1"}`
-	code, err := f.client().Authorize(context.Background(), "bob", "pw", "ch")
+	code, err := f.client().authorize(context.Background(), "bob", "pw", "ch")
 	if err != nil || code != "XYZ" {
 		t.Fatalf("code=%q err=%v", code, err)
+	}
+}
+
+// SignIn is the PKCE flow: authorize with an S256 challenge, then the token
+// exchange with the verifier that challenge was made from.
+func TestSignInRunsPKCE(t *testing.T) {
+	var challengeSent, verifierSent string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]string
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		switch r.URL.Path {
+		case "/v1/auth/authorize":
+			if body["handle"] != "ann@k" || body["password"] != "pw" {
+				w.WriteHeader(http.StatusUnauthorized)
+				io.WriteString(w, `{"code":"unauthenticated","error":"invalid handle or password"}`)
+				return
+			}
+			challengeSent = body["code_challenge"]
+			io.WriteString(w, `{"redirect":"?code=C"}`)
+		case "/v1/auth/token":
+			verifierSent = body["code_verifier"]
+			io.WriteString(w, `{"access_token":"a","refresh_token":"r"}`)
+		}
+	}))
+	defer srv.Close()
+	c := New(srv.URL, nil)
+	toks, err := c.SignIn(context.Background(), "ann@k", "pw")
+	if err != nil || toks.AccessToken != "a" || toks.RefreshToken != "r" {
+		t.Fatalf("tokens %+v: %v", toks, err)
+	}
+	if len(verifierSent) != 43 || challengeSent != challenge(verifierSent) || strings.HasSuffix(challengeSent, "=") {
+		t.Errorf("challenge %q is not S256 of verifier %q", challengeSent, verifierSent)
+	}
+	if _, err := c.SignIn(context.Background(), "ann@k", "wrong"); !errors.Is(err, ErrUnauthenticated) {
+		t.Errorf("a refused sign-in passes the kernel's error through: %v", err)
+	}
+	if v1, _ := newVerifier(); v1 == verifierSent {
+		t.Error("each sign-in draws a fresh verifier")
 	}
 }
 

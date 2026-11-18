@@ -13,7 +13,7 @@
   </div>
 </div>
 {{else}}
-<form class="install-step" method="post" action="/install/next"{{if eq .Step "kernel"}} data-confirm-password{{end}}>
+<form class="install-step" method="post" action="/install/next"{{if or (eq .Step "kernel") (eq .Step "assistant")}} data-confirm-password{{end}}>
   <input type="hidden" name="step" value="{{.Step}}">
   <h2>{{.Title}}</h2>
   <div class="install-content stack">
@@ -37,6 +37,10 @@
     <div class="field"><label>Superuser name</label><div class="box mono">sys</div></div>
     <div class="field"><label for="i-pw">Superuser password</label><input id="i-pw" name="password" type="password" autocomplete="new-password" minlength="8" required></div>
     <div class="field"><label for="i-pw2">Confirm password</label><input id="i-pw2" name="confirm_password" type="password" autocomplete="new-password" minlength="8" required></div>
+    {{else if eq .Step "assistant"}}
+    <div class="field"><label>Assistant</label><p class="help">The agent each person meets in their first room.</p><div class="box mono">assistant@{{.Handle}}</div></div>
+    <div class="field"><label for="i-apw">Assistant password</label><input id="i-apw" name="password" type="password" autocomplete="new-password" minlength="8" required></div>
+    <div class="field"><label for="i-apw2">Confirm password</label><input id="i-apw2" name="confirm_password" type="password" autocomplete="new-password" minlength="8" required></div>
     {{else if eq .Step "models"}}
     {{template "_models_form" .Models}}
     {{else if eq .Step "phrase"}}
@@ -48,6 +52,7 @@
       <dt>World</dt><dd><span class="mono">{{.World.Name}}</span>{{with .World.Description}} — {{.}}{{end}}</dd>
       <dt>Kernel name</dt><dd class="mono">{{.Handle}}</dd>
       <dt>Superuser</dt><dd class="mono">sys</dd>
+      <dt>Assistant</dt><dd class="mono">assistant@{{.Handle}}</dd>
       <dt>Chat model</dt><dd>{{.Models.Chat.Summary}}</dd>
       <dt>Embedding model</dt><dd>{{.Models.Embed.Summary}}</dd>
       <dt>Kernel home</dt><dd class="mono">{{.Home}}</dd>

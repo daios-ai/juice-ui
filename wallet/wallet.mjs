@@ -37,11 +37,13 @@ export async function register(p, prefix) {
 }
 
 // fetchTx asks the server for the transfer, built from a fresh read of the
-// registered address; 409 means nothing fundable is on file any more.
-export async function fetchTx(fetchFn, amount, csrf) {
+// registered address; 409 means nothing fundable is on file any more. It
+// names the account the page was opened for, so a page of another account
+// than the one in use is refused (requirements §5).
+export async function fetchTx(fetchFn, amount, csrf, account) {
   const res = await fetchFn('/wallet/fund', {
     method: 'POST', credentials: 'same-origin', body: new URLSearchParams({ amount }),
-    headers: { 'X-CSRF-Token': csrf, 'Content-Type': 'application/x-www-form-urlencoded' },
+    headers: { 'X-CSRF-Token': csrf, 'X-Juice-Account': account, 'Content-Type': 'application/x-www-form-urlencoded' },
   });
   if (!res.ok) throw fail(res.status === 409 ? 'stale' : 'failed');
   return res.json();
@@ -98,7 +100,8 @@ async function bind(doc) {
     try {
       if (el.hasAttribute('data-wallet-send')) {
         const csrf = doc.querySelector('meta[name="csrf-token"]').content;
-        const tx = await fetchTx(fetch, el.dataset.amount, csrf);
+        const account = doc.querySelector('meta[name="account"]').content;
+        const tx = await fetchTx(fetch, el.dataset.amount, csrf, account);
         const p = await pick(el, tx.from);
         if (!p) throw fail('none');
         await send(p, tx);
