@@ -1,7 +1,12 @@
 # Juice Web UI Requirements
 
-Version: 0.76.0
+Version: 0.76.1
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.76.1.** Every kernel on the network page carries its
+> key again, shortened, with the copy of the whole key, in a Key column of its
+> row — this kernel's too, so an operator can hand their own key on (§6.6).
+> 0.76.0 had dropped it from a named kernel's row.
 
 > **What changed in 0.76.0.** A session holds every account its person signs
 > in to, one of them in use, as Gmail and `juice auth use` do (§5): the
@@ -2878,18 +2883,20 @@ Rename and Suspend (or Unsuspend), since a user has no page here.
   action count). The
   page lists **this kernel first, then its counterparties, then the known
   network**, each class in the kernel's own order, as one paged record list
-  (above) — the kernel's name, the size of its catalog, when it was last seen
-  — and **not polled**. A class is marked by a neutral pill beside its name:
+  (above) — the kernel's name, its key, the size of its catalog, when it was
+  last seen — and **not polled**. A class is marked by a neutral pill beside its name:
   `this kernel` on this kernel, `party` on a counterparty; a known kernel
   carries no mark. This kernel's title is its own handle, and its row links
   nowhere, because it is this page; a peer's row opens its page. The identity
   this kernel's row needs is read before the page renders: a failed read is an
   error, never a blank row.
-  **The key renders in one spelling.** The abbreviation exists for matching:
-  an unbound kernel's name is the abbreviated key, with the one **copy
-  control** (§7) yielding the whole key, because every command that takes a
-  kernel takes the whole key; a named kernel's row shows no key, which its
-  page states.
+  **Every row carries its key, in one spelling.** The abbreviation exists for
+  matching, and the one **copy control** (§7) beside it yields the whole key,
+  because every command that takes a kernel takes the whole key and an
+  operator hands their own kernel's key on: a row's **Key** column holds it,
+  this kernel's row included; an unbound kernel's name already is the
+  abbreviated key, with its copy, so its Key cell is empty and the key is
+  spelled once.
   **A peer row's figures** are the catalog count (both classes) and
   `last_seen` — when a verified exchange last succeeded, catalog freshness —
   dated, `never` until one has. It is a dated fact and never a status pill,
@@ -4309,7 +4316,8 @@ Every production `.go` file has a `_test.go` file with independent tests.
   every cell between, and the stylesheet stacks it on a narrow screen; a
   user's row states no description and no `active` pill; a kernel's row its
   class pills, catalog size and last seen, `Name` only when unnamed, this
-  kernel's linking nowhere, and no key beside a name;
+  kernel's linking nowhere, and every row's key with its copy, once — in the
+  Key column, or as the name of an unbound kernel;
 * the network page's halt banner is led by `#alert`, a banner in page flow owns
   its spacing, and the vault's finalized holdings render as served (§6.6);
 * what is known about an action comes from its detail read: the strip is

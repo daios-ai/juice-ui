@@ -1224,25 +1224,42 @@ func TestNamedRowsCarryNoVerbs(t *testing.T) {
 	}
 }
 
-// A row spells a peer's key only as its name, when no petname or nickname
-// labels it, with its copy control; a peer a nickname labels is ~nickname
-// with the copy of its key, as a key is its identity; a bound peer is its
-// petname alone. The key in full is its page's.
-func TestARowSpellsTheKeyOnlyAsItsName(t *testing.T) {
+// Every kernel's key stands in the Key column, shortened, with its copy
+// control yielding the whole key — this kernel's too, so its operator can
+// hand it on — save a row whose name already is the key, where it stands once
+// as the name with its copy and the Key cell is empty. A nickname is the name
+// marked ~, never in parentheses.
+func TestEveryKernelRowCarriesItsKey(t *testing.T) {
 	const key = "lHynnkVtXrzrfAHCPgrjzctyjQqkehrUz0BZp7Pxnmw"
 	short := client.ShortKey(key)
+	keyCell := `<td class="mono" data-label="Key"><span class="name mono" title="` + key + `">` + short + `</span> <button`
 	unbound := renderPeersPage(t, []client.Peer{{PublicKey: key}}, false)
-	if strings.Count(unbound, short) != 1 || strings.Count(unbound, `data-copy="`+key+`"`) != 1 {
-		t.Errorf("an unbound row spells its key once, with its copy: %s", unbound)
+	if strings.Count(unbound, short) != 1 || strings.Count(unbound, `data-copy="`+key+`"`) != 1 || strings.Contains(unbound, keyCell) {
+		t.Errorf("a row whose name is its key spells it once, with its copy, its Key cell empty: %s", unbound)
 	}
 	claimed := renderPeersPage(t, []client.Peer{{Nickname: "TitanPlus", PublicKey: key}}, false)
-	if !strings.Contains(claimed, `>~TitanPlus</span></a>`) || strings.Contains(claimed, "(TitanPlus)") || strings.Contains(claimed, ">"+short+"<") ||
-		strings.Count(claimed, `data-copy="`+key+`"`) != 1 {
-		t.Errorf("a row a nickname labels shows ~TitanPlus and the copy of its key: %s", claimed)
+	if !strings.Contains(claimed, `>~TitanPlus</span></a>`) || strings.Contains(claimed, "(TitanPlus)") || !strings.Contains(claimed, keyCell) ||
+		strings.Count(claimed, short) != 1 || strings.Count(claimed, `data-copy="`+key+`"`) != 1 {
+		t.Errorf("a row a nickname labels shows ~TitanPlus and its key once, in the Key column with its copy: %s", claimed)
 	}
 	bound := renderPeersPage(t, []client.Peer{{Petname: "titan", PublicKey: key}}, false)
-	if strings.Contains(bound, short) || strings.Contains(bound, `data-copy="`+key+`"`) {
-		t.Errorf("a bound row is its petname alone: %s", bound)
+	if !strings.Contains(bound, keyCell) || strings.Count(bound, `data-copy="`+key+`"`) != 1 {
+		t.Errorf("a bound row's key is in the Key column with its copy: %s", bound)
+	}
+	r, err := NewRenderer(playKernel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := client.Identity{Handle: "me", PublicKey: key}
+	rec := httptest.NewRecorder()
+	if err := r.Render(rec, 200, "admin_peers", Page{Me: "sys@testnet", IsSuperuser: true, CSRFField: template.HTML("<input>"), Data: adminPeersView{Identity: id, Kernels: kernelRows(id, nil)}}); err != nil {
+		t.Fatal(err)
+	}
+	if own := rec.Body.String(); !strings.Contains(own, keyCell) || strings.Count(own, `data-copy="`+key+`"`) != 1 {
+		t.Errorf("this kernel's row carries its own key, with its copy: %s", own)
+	}
+	if !strings.Contains(bound, `<th>Kernel</th><th>Key</th>`) {
+		t.Error("the Key column follows the name")
 	}
 }
 

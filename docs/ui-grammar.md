@@ -782,10 +782,12 @@ A peer's row is `.rowable` and opens its page (`/admin/peers/{key}`), where it
 is named and suspended (suspension freezes the kernel row, so every kernel's
 page offers it); a suspended
 kernel says so by its `suspended` danger pill, never faded. Its columns are
-Actions (the size of its catalog) and Seen (`last_seen`, relative, `never`
-until an exchange has succeeded): catalog freshness, never a verdict on
-whether it is up; its key, its about and its contact are its page's. This
-kernel's row states none of them; it is titled with its own handle and links nowhere,
+**Key** (the key's one spelling with its copy, on every row, this kernel's
+too, so an operator hands on their own; empty where the name already is the
+key), Actions (the size of its catalog) and Seen (`last_seen`, relative,
+`never` until an exchange has succeeded): catalog freshness, never a verdict
+on whether it is up; its about and its contact are its page's. This kernel's
+row states its key alone; it is titled with its own handle and links nowhere,
 because it is this page. A named row carries **no verb**, as a result row
 carries none; a row no petname names carries the one verb, `Name` — the same
 `.btn` as on the kernel's page — in its commands cell, linking into its page
@@ -794,9 +796,9 @@ the verb appears exactly where the gap it fills is visible.
 
 **The key has one spelling**: `client.ShortKey` (the first 10 characters, `…`,
 the last 4; the whole key in `title`), wherever a key is named, alone or in an
-address. A row whose label is its key has that spelling as its name; a
-named row shows no key, which its page states. `truncate` never touches a
-key.
+address. A row whose label is its key has that spelling as its name, with
+its copy; any other row has it in its Key column, with its copy. `truncate`
+never touches a key.
 
 **A party has one rendering**, `_name` (§5.7), wherever a user, a kernel or an
 action's owner is named: its label (`client.Party.Label`, below), the whole
