@@ -9,9 +9,7 @@
   Aesthetic (v0.3): a minimal marketplace storefront. The UI face is proportional
   (--font-ui); monospace (--font-mono) is RESERVED for the provenance set — money,
   owner/name, ids, hashes, sealed partial_args — so the typeface marks
-  kernel-vouched facts apart from chrome. Corners are softly rounded. The
-  `terminal` theme overrides --font-ui and the radii back to the old identity
-  (see themes.go / themes.css); components must never assume one or the other.
+  kernel-vouched facts apart from chrome. Corners are softly rounded.
 */
 
 :root {

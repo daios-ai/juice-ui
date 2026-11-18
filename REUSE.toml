@@ -48,21 +48,36 @@ precedence = "override"
 SPDX-FileCopyrightText = "Material Design Authors"
 SPDX-License-Identifier = "Apache-2.0"
 
-# Terminal palettes from the iTerm2-Color-Schemes collection; paper, ink and
-# terminal are Juice-UI's own.
+# Terminal palettes from the iTerm2-Color-Schemes collection.
 [[annotations]]
 path = [
+  "server/themes/catppuccin-latte.ghostty",
   "server/themes/catppuccin-mocha.ghostty",
   "server/themes/dracula.ghostty",
-  "server/themes/github-light.ghostty",
+  "server/themes/everforest-dark.ghostty",
+  "server/themes/everforest-light.ghostty",
   "server/themes/gruvbox-dark.ghostty",
   "server/themes/gruvbox-light.ghostty",
+  "server/themes/kanagawa-lotus.ghostty",
+  "server/themes/kanagawa-wave.ghostty",
+  "server/themes/nord-light.ghostty",
   "server/themes/nord.ghostty",
   "server/themes/one-dark.ghostty",
+  "server/themes/one-light.ghostty",
   "server/themes/rose-pine-dawn.ghostty",
   "server/themes/rose-pine-moon.ghostty",
+  "server/themes/solarized-dark.ghostty",
+  "server/themes/solarized-light.ghostty",
+  "server/themes/tokyo-night-day.ghostty",
   "server/themes/tokyo-night.ghostty",
 ]
 precedence = "override"
 SPDX-FileCopyrightText = "2011-present Mark Badolato"
+SPDX-License-Identifier = "MIT"
+
+# Alucard, Dracula's light palette, set in Dracula's terminal slots.
+[[annotations]]
+path = "server/themes/dracula-alucard.ghostty"
+precedence = "override"
+SPDX-FileCopyrightText = "2023 Dracula Theme"
 SPDX-License-Identifier = "MIT"

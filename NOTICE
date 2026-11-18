@@ -22,4 +22,5 @@ Third-party:
   icons/index.json.gz         Material Icons artwork, Material Design Authors,
                               Apache-2.0; icons/NOTICE states the changes
   server/themes/*.ghostty     iTerm2-Color-Schemes, Mark Badolato, MIT,
-                              except paper, ink and terminal
+                              except dracula-alucard, from the palette of
+                              Dracula Theme, MIT

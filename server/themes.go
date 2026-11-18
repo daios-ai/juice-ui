@@ -33,46 +33,47 @@ type ANSIPalette struct {
 	SelFG      RGB
 	AccentSlot int            // ANSI slot used for --accent (distinct from 1/2/4/5)
 	Overrides  map[string]RGB // hand-tuned token values for palettes the mapping can't salvage
-	Mono       bool           // override --font-ui back to the monospace face (the terminal identity)
-	Square     bool           // override --radius/--radius-s to 0 (square corners)
 }
 
-// themeMeta is the curated registry: display name, dark/light, per-theme accent
-// slot, and contrast overrides. Order here is the order shown in the picker
-// (darks first, then lights, roughly by familiarity).
+// themeMeta is the shipped set (§7): the ten terminal families, each in one
+// dark and one light version, with the per-theme accent slot and any contrast
+// overrides. Order here is the order shown in the picker: by family, dark first.
 var themeMeta = []struct {
 	Slug      string
 	Name      string
 	Dark      bool
 	Accent    int
 	Overrides map[string]RGB
-	Mono      bool
-	Square    bool
 }{
-	// --- v0.3 flagships (defaults) ---
-	{Slug: "paper", Name: "Paper", Dark: false, Accent: 3},
-	{Slug: "ink", Name: "Ink", Dark: true, Accent: 3},
-	// The terminal identity, preserved as an opt-in theme: monospace UI face,
-	// square corners (Mono/Square override the structural tokens).
-	{Slug: "terminal", Name: "Terminal", Dark: true, Accent: 3, Mono: true, Square: true},
-	// --- curated Ghostty palettes kept from the earlier set ---
-	{Slug: "one-dark", Name: "One Dark", Dark: true, Accent: 6},
-	{Slug: "dracula", Name: "Dracula", Dark: true, Accent: 6},
-	{Slug: "nord", Name: "Nord", Dark: true, Accent: 6},
-	{Slug: "gruvbox-dark", Name: "Gruvbox Dark", Dark: true, Accent: 3},
-	{Slug: "tokyo-night", Name: "Tokyo Night", Dark: true, Accent: 6},
 	{Slug: "catppuccin-mocha", Name: "Catppuccin Mocha", Dark: true, Accent: 6},
-	{Slug: "rose-pine-moon", Name: "Rosé Pine Moon", Dark: true, Accent: 6},
-	{Slug: "github-light", Name: "GitHub Light", Dark: false, Accent: 6},
-	{Slug: "rose-pine-dawn", Name: "Rosé Pine Dawn", Dark: false, Accent: 6},
+	{Slug: "catppuccin-latte", Name: "Catppuccin Latte", Dark: false, Accent: 6},
+	{Slug: "tokyo-night", Name: "Tokyo Night", Dark: true, Accent: 6},
+	{Slug: "tokyo-night-day", Name: "Tokyo Night Day", Dark: false, Accent: 6},
+	{Slug: "gruvbox-dark", Name: "Gruvbox Dark", Dark: true, Accent: 3},
 	{Slug: "gruvbox-light", Name: "Gruvbox Light", Dark: false, Accent: 3},
+	{Slug: "nord", Name: "Nord", Dark: true, Accent: 6},
+	{Slug: "nord-light", Name: "Nord Light", Dark: false, Accent: 6},
+	{Slug: "dracula", Name: "Dracula", Dark: true, Accent: 6},
+	{Slug: "dracula-alucard", Name: "Dracula Alucard", Dark: false, Accent: 6},
+	{Slug: "solarized-dark", Name: "Solarized Dark", Dark: true, Accent: 6},
+	{Slug: "solarized-light", Name: "Solarized Light", Dark: false, Accent: 6},
+	{Slug: "one-dark", Name: "One Dark", Dark: true, Accent: 6},
+	// One Light's slot 6 is a green beside its credited green, so its accent is
+	// the yellow slot.
+	{Slug: "one-light", Name: "One Light", Dark: false, Accent: 3},
+	{Slug: "rose-pine-moon", Name: "Rosé Pine Moon", Dark: true, Accent: 6},
+	{Slug: "rose-pine-dawn", Name: "Rosé Pine Dawn", Dark: false, Accent: 6},
+	{Slug: "kanagawa-wave", Name: "Kanagawa Wave", Dark: true, Accent: 3},
+	{Slug: "kanagawa-lotus", Name: "Kanagawa Lotus", Dark: false, Accent: 6},
+	{Slug: "everforest-dark", Name: "Everforest Dark", Dark: true, Accent: 3},
+	{Slug: "everforest-light", Name: "Everforest Light", Dark: false, Accent: 6},
 }
 
 // Default themes chosen when the user has no explicit preference: the light one
 // applies by default, the dark one under prefers-color-scheme: dark.
 const (
-	defaultLightTheme = "paper"
-	defaultDarkTheme  = "ink"
+	defaultLightTheme = "catppuccin-latte"
+	defaultDarkTheme  = "catppuccin-mocha"
 )
 
 // loadThemes parses every registered theme once. It panics on a malformed or
@@ -90,7 +91,6 @@ func loadThemes() []ANSIPalette {
 			panic(fmt.Sprintf("theme %s: %v", m.Slug, err))
 		}
 		p.Slug, p.Name, p.Dark, p.AccentSlot, p.Overrides = m.Slug, m.Name, m.Dark, m.Accent, m.Overrides
-		p.Mono, p.Square = m.Mono, m.Square
 		out = append(out, p)
 	}
 	return out
@@ -330,15 +330,6 @@ func (p ANSIPalette) block() string {
 	var b strings.Builder
 	for _, k := range tokenOrder {
 		fmt.Fprintf(&b, "  %s: %s;\n", k, tk[k].hex())
-	}
-	// Structural overrides (§7): a theme MAY revert the UI face to monospace and
-	// the corners to square — the `terminal` theme does. Non-flagged themes
-	// inherit the proportional/soft defaults from tokens.css.
-	if p.Mono {
-		b.WriteString("  --font-ui: var(--font-mono);\n")
-	}
-	if p.Square {
-		b.WriteString("  --radius: 0; --radius-s: 0;\n")
 	}
 	// Card-art parameters. The generated media slot (cardart.go) colors itself
 	// oklch(var(--art-ground) H) / oklch(var(--art-glyph) H), supplying only the

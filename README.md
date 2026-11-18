@@ -18,9 +18,9 @@ responses rather than reproducing kernel logic.
   the conversation, and their results carried into the next message or action.
   Inbox, Discover, Workshop, Wallet and Settings (and Network, Admin and
   Agents for `sys`) are destinations of the avatar menu.
-- **Terminal aesthetic** — a monospace face and selectable **Ghostty 16-colour ANSI
-  themes**, every theme derived from one set of design tokens and held to WCAG AA by
-  a test.
+- **Terminal colours** — twenty selectable **Ghostty 16-colour ANSI themes**,
+  the ten popular terminal families in dark and light, every theme derived
+  from one set of design tokens and held to WCAG AA by a test.
 - **Keyboard-first** — `/` for actions and pages, Enter to send, `g`+letter
   jumps, `j`/`k`/`Enter` on rows, `?` for help.
 - **No SPA** — server-rendered HTML with **htmx** and a few vanilla ES modules. No

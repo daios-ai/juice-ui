@@ -2,6 +2,7 @@ package server
 
 import (
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -79,6 +80,55 @@ func TestThemeContrast(t *testing.T) {
 		// destructive buttons, grammar §5.1)
 		if r := contrast(tk["--danger"], tk["--danger-contrast"]); r < 3.0 {
 			t.Errorf("%s: danger-contrast %.2f < 3.0 on danger", p.Slug, r)
+		}
+	}
+}
+
+// TestShippedThemes holds the shipped set (§7): the ten terminal families, each
+// in one dark and one light version, dark first, and nothing else. No theme
+// overrides a structural token.
+func TestShippedThemes(t *testing.T) {
+	want := []struct {
+		slug string
+		dark bool
+	}{
+		{"catppuccin-mocha", true}, {"catppuccin-latte", false},
+		{"tokyo-night", true}, {"tokyo-night-day", false},
+		{"gruvbox-dark", true}, {"gruvbox-light", false},
+		{"nord", true}, {"nord-light", false},
+		{"dracula", true}, {"dracula-alucard", false},
+		{"solarized-dark", true}, {"solarized-light", false},
+		{"one-dark", true}, {"one-light", false},
+		{"rose-pine-moon", true}, {"rose-pine-dawn", false},
+		{"kanagawa-wave", true}, {"kanagawa-lotus", false},
+		{"everforest-dark", true}, {"everforest-light", false},
+	}
+	got := ThemeList()
+	if len(got) != len(want) {
+		t.Fatalf("%d themes shipped, want %d", len(got), len(want))
+	}
+	for i, w := range want {
+		if got[i].Slug != w.slug || got[i].Dark != w.dark {
+			t.Errorf("theme %d is %s (dark %v), want %s (dark %v)", i, got[i].Slug, got[i].Dark, w.slug, w.dark)
+		}
+		// The file agrees with the row: a dark theme's background is the darker
+		// of its two base colors.
+		if dark := relLum(got[i].Background) < relLum(got[i].Foreground); dark != w.dark {
+			t.Errorf("%s: its palette is dark %v, registered dark %v", w.slug, dark, w.dark)
+		}
+	}
+	for _, gone := range []string{"paper", "ink", "terminal", "github-light"} {
+		if ValidTheme(gone) {
+			t.Errorf("%s is still shipped", gone)
+		}
+	}
+	if defaultLightTheme != "catppuccin-latte" || defaultDarkTheme != "catppuccin-mocha" {
+		t.Errorf("defaults are %s and %s", defaultLightTheme, defaultDarkTheme)
+	}
+	css := GenerateThemesCSS()
+	for _, structural := range []string{"--font-ui", "--radius"} {
+		if strings.Contains(css, structural) {
+			t.Errorf("the theme stylesheet overrides %s", structural)
 		}
 	}
 }

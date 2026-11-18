@@ -108,14 +108,16 @@ into `static/themes.css` from Ghostty 16-color palettes (`server/themes/`).
 | `--credited` / `--refunded` / `--escrow` | money signals: in `+` / returned `↩` / parked `◷` |
 | `--danger` / `--danger-contrast` | critical color, readable text on a filled danger button |
 | `--sel-bg` / `--sel-fg` | text selection |
-| `--radius` (card) / `--radius-s` (control) / `--shadow` (`none`) | structural (in `tokens.css`; a theme MAY override `--radius`/`--radius-s`, e.g. `terminal` → `0`) |
-| `--font-ui` (proportional) / `--font-mono` (provenance) | type faces (`tokens.css`; a theme MAY override `--font-ui`, e.g. `terminal` → `var(--font-mono)`) |
+| `--radius` (card) / `--radius-s` (control) / `--shadow` (`none`) | structural (in `tokens.css`; the same in every theme) |
+| `--font-ui` (proportional) / `--font-mono` (provenance) | type faces (`tokens.css`; the same in every theme) |
 | `--font-size-xs … -2xl` · `--space-1 … -6` | the type (§3) and spacing (§4) scales |
 | `--control-h` (`2.25rem`) · `--topbar-h` | the one height of every button, input, select, one-line textarea and icon button; the narrow topbar's |
 | `--icon-sm` / `--icon-md` / `--icon-lg` · `--avatar` / `--avatar-lg` · `--radius-full` | icon sizes (inside text and chips / everywhere else / the topbar trigger), avatar sizes, round |
 
-- **Theme selection:** defaults from `prefers-color-scheme` (a default light and
-  dark theme); an explicit choice is the `theme` cookie (slug) stamped on
+- **Themes:** ten terminal families, each in one dark and one light version
+  (requirements §7); a theme sets colours only.
+- **Theme selection:** defaults from `prefers-color-scheme` (Catppuccin Latte
+  and Catppuccin Mocha); an explicit choice is the `theme` cookie (slug) stamped on
   `<html data-theme>`, no flash, works with JS off.
 - **Contrast:** every theme MUST pass WCAG AA — body/muted ≥4.5, signals/accent
   ≥3.0, accent distinct from every money signal. Enforced by test; a failing
@@ -133,8 +135,7 @@ into `static/themes.css` from Ghostty 16-color palettes (`server/themes/`).
   prose — the storefront register. **Monospace (`--font-mono`) is reserved** for
   the *provenance* set: money, IDs, hashes, addresses, and sealed
   `partial_args`. The typeface itself marks kernel-vouched facts apart from
-  chrome and from counterparty prose. (The `terminal` theme overrides `--font-ui`
-  back to mono; components never assume one or the other — they use the token.)
+  chrome and from counterparty prose.
 - **Scale:** six steps anchored at the standard size — `--font-size-2xl`
   (`1.5625rem`, h1 and a headline figure) · `-xl` (`1.25rem`, h2) · `-lg`
   (`1.125rem`, h3, the brand) · `-md` (`1rem`, body and every control) · `-sm`

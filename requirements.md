@@ -1,7 +1,16 @@
 # Juice Web UI Requirements
 
-Version: 0.76.2
+Version: 0.76.3
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.76.3.** The themes are the ten popular terminal
+> families, each in one dark and one light version: Catppuccin, Tokyo Night,
+> Gruvbox, Nord, Dracula, Solarized, One Dark, Rosé Pine, Kanagawa and
+> Everforest. They replace every theme shipped before; Paper, Ink, Terminal
+> and GitHub Light are gone, and with Terminal the monospace interface and
+> square corners. With no theme chosen the page is Catppuccin Latte, or
+> Catppuccin Mocha under a dark system setting; a saved choice of a removed
+> theme falls back to that (§7).
 
 > **What changed in 0.76.2.** The network page leads with three figures of
 > this kernel's money, each with a note: balances held, backed in full or
@@ -3955,7 +3964,10 @@ imports its live rooms, members and messages once and never writes that file.
   work still to do, and small. All of them page at **20 per page** through **one shared,
   quiet pager** (`← previous · page N · next →`; a boundary renders a dimmed non-link).
   Several lists on one page share one pager. The pager carries no accent (money-reserved).
-* **Themes.** The UI ships **multiple selectable themes**, each defined
+* **Themes.** The UI ships **twenty selectable themes**: the ten terminal
+  families Catppuccin, Tokyo Night, Gruvbox, Nord, Dracula, Solarized, One
+  Dark, Rosé Pine, Kanagawa and Everforest, each in one dark and one light
+  version, listed by family, dark first. Each is defined
   by a **Ghostty 16-colour ANSI palette** (`palette 0–15` plus
   background/foreground/cursor/selection). Every theme MUST derive from one set of
   semantic design tokens (CSS custom properties) mapped from the palette
@@ -3970,20 +3982,16 @@ imports its live rooms, members and messages once and never writes that file.
   works without JavaScript. Every shipped theme MUST meet WCAG AA (≥4.5:1 body and
   muted text, ≥3:1 status signals and UI affordances) — enforced by test; a theme
   that cannot is not shipped. The accent MUST stay visually distinct from every
-  money-status colour. The default light and dark themes are **paper** and
-  **ink** (proportional, soft corners). A theme MAY additionally override the
-  **structural** tokens (`--font-ui`, `--radius`) — the shipped `terminal` theme
-  does so to restore the monospace UI face and square corners — but the
-  **provenance** face (`--font-mono` on money, refs, ids, hashes) and every
-  money/accent discipline above hold in every theme. `prefers-reduced-motion` MUST
+  money-status colour. The default light and dark themes are **Catppuccin
+  Latte** and **Catppuccin Mocha**. A theme sets colours only: the faces and
+  the radii are the same in every theme. `prefers-reduced-motion` MUST
   be respected.
 * **Typography.** The UI face is the **proportional system sans stack** (the
   storefront register). **Monospace with tabular figures is reserved** for the
   provenance set — money, IDs, hashes, `owner/name`, and sealed `partial_args` —
   so the typeface itself marks kernel-vouched facts apart from proportional chrome
   and from counterparty prose. Corners are softly rounded (a card radius and a
-  tighter control radius, both tokens); no drop shadows. The `terminal` theme
-  reverts the UI face to monospace and the radius to square.
+  tighter control radius, both tokens); no drop shadows.
 * **Sizes are tokens.** Font sizes, spacing, icon and avatar sizes, radii and
   one control height MUST be design tokens, the spacing on a 4px base, and the
   stylesheet MUST write no size literal in their place (hairlines excepted),
