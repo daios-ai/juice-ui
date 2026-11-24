@@ -88,10 +88,23 @@ func TestPartyKeyed(t *testing.T) {
 	}
 }
 
+// A kernel's key is told from a petname and a handle by its length alone.
+func TestIsKey(t *testing.T) {
+	for name, want := range map[string]bool{
+		"A6cNHvNorZnpDVCUlumIjudATk9NNgN2v1IddpzwxN5G": true, // as kernel v0.22.1 sends
+		"1MutJi6KXZIWlxJMiIKsu4gR6-R4ACoEJwP7sNT_mq4":  false,
+		"beta": false, "": false,
+	} {
+		if IsKey(name) != want {
+			t.Errorf("IsKey(%q) = %v", name, !want)
+		}
+	}
+}
+
 // An address names its kernel by key as ShortKey shows a key; an address by
 // name, and anything that is no address, pass unchanged.
 func TestShortAddress(t *testing.T) {
-	key := strings.Repeat("a", 39) + "WXYZ"
+	key := strings.Repeat("a", KeyLen-4) + "WXYZ"
 	for in, want := range map[string]string{
 		"bob@" + key:          "bob@aaaaaaaaaa…WXYZ",
 		"bob@beta":            "bob@beta",
@@ -109,7 +122,7 @@ func TestShortAddress(t *testing.T) {
 // something by that name marked ~, one that does neither by its key; a
 // question adds the key a nickname stands in for.
 func TestPartyLabel(t *testing.T) {
-	key := strings.Repeat("a", 39) + "WXYZ"
+	key := strings.Repeat("a", KeyLen-4) + "WXYZ"
 	short := "aaaaaaaaaa…WXYZ"
 	for _, c := range []struct {
 		p                   Party
@@ -139,7 +152,7 @@ func TestPartyLabel(t *testing.T) {
 // the kernel as Label names it, the path; a kernel has neither handle nor path.
 // Owner and Kernel are parties named by the same rule.
 func TestPartyParts(t *testing.T) {
-	key := strings.Repeat("a", 39) + "WXYZ"
+	key := strings.Repeat("a", KeyLen-4) + "WXYZ"
 	short := "aaaaaaaaaa…WXYZ"
 	for _, c := range []struct {
 		p                    Party

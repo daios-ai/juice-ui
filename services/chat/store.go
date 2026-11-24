@@ -1012,7 +1012,7 @@ func (s *Store) Member(raw string) (string, bool) {
 // user by on every kernel.
 func IsPrincipal(m string) bool {
 	id, k, ok := strings.Cut(m, "@")
-	return ok && len(k) == client.KeyLen && len(id) == 36 && strings.Count(id, "-") == 4
+	return ok && client.IsKey(k) && len(id) == 36 && strings.Count(id, "-") == 4
 }
 
 // ID is what the store holds a member by: its principal, or the address a

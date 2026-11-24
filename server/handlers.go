@@ -365,7 +365,7 @@ func (s *Server) postSignup(w http.ResponseWriter, r *http.Request) {
 	// Generate the recovery phrase locally and enrol only its derived public key
 	// (§12): the phrase is the sole reset path, so a generation failure aborts
 	// signup rather than creating an unrecoverable account.
-	mnemonic, err := generateMnemonic()
+	mnemonic, err := NewRecoveryPhrase()
 	if err != nil {
 		s.renderPage(w, r, http.StatusOK, "login", "Sign in", loginView{Tab: "signup", Error: recoverySetupFailed})
 		return

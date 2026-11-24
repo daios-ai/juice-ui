@@ -687,7 +687,7 @@ text, no route by id, a name inside a link `plain`, the chain-address partial
 
 When the kernel segment is a **raw public key** it is cut short by
 `client.ShortKey`, the whole address in the `title`. A bound petname is not
-key-shaped and renders whole. A 43-character key MUST never be a card title —
+key-shaped and renders whole. A key MUST never be a card title —
 the action's title is.
 
 Wherever an action is presented as a thing — a card, the action page's `<h1>`,
@@ -940,7 +940,7 @@ content only: no step sets a size or a spacing of its own.
   text), and its commands (`.install-actions`, a `.cluster` over a hairline,
   held at the foot). The row follows the installers' convention, the one
   exception to §5.1's order: `Back` at the left edge and the step's command
-  (`Next`, `Install`, `Try again`) at the right, a second command between
+  (`Create a new kernel`, `Next`, `Install`, `Try again`) at the right, a second command between
   them (the Models step's `List models`). The command stays
   first in the markup, so Enter in a field submits it and never goes back.
 - **A job step** uses the same three slots. Its jobs, `.install-jobs`, share the

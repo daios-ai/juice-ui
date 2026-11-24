@@ -10,8 +10,8 @@ import (
 	bip39 "github.com/tyler-smith/go-bip39"
 )
 
-func TestGenerateMnemonicIsTwelveValidWords(t *testing.T) {
-	m, err := generateMnemonic()
+func TestNewRecoveryPhraseIsTwelveValidWords(t *testing.T) {
+	m, err := NewRecoveryPhrase()
 	if err != nil {
 		t.Fatal(err)
 	}

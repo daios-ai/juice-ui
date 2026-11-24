@@ -1,7 +1,16 @@
 # Juice Web UI Requirements
 
-Version: 0.76.3
+Version: 0.77.0
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.77.0.** The kernel pin is v0.22.1, whose kernel has one
+> key, derived from its recovery phrase: the first boot passes the phrase
+> (`JUICE_BOOTSTRAP_PHRASE`) in place of a public key, the installer states
+> what the phrase restores and controls, and a kernel's public key is 44
+> characters. A kernel made before v0.22.0 cannot be served: the installer's
+> first page says so and asks, and its command keeps the old kernel in
+> `$JUICE_HOME/old/<version>/` and makes a new one (§1). A `kernel.key` left in a
+> home with no database is renamed before a first boot.
 
 > **What changed in 0.76.3.** The themes are the ten popular terminal
 > families, each in one dark and one light version: Catppuccin, Tokyo Night,
@@ -1351,6 +1360,22 @@ answered within 15 seconds, or that fails to start, is said: on the entry card,
 the job in hand ("Start the kernel", "Wait for `<url>`") with the kernel's own
 words, polled until it answers. Nothing on that card names an installation.
 
+* **Old kernel** comes first, and only when a kernel lives here and the kernel
+  binary that serves it is older than v0.22.0: no later kernel serves it. The
+  page names it and its release, says that a new kernel will be created and where
+  the old one is kept, warns, where it holds an address on a chain, that the money
+  stays there, and gives the command that installs the UI release it last ran
+  under. Nothing is downloaded or moved before its button, **Create a new
+  kernel**, which moves the kernels, `client/`, `agents/`, `services/`,
+  `worlds/`, `supervisor/programs/` and `bin/juice` to
+  `$JUICE_HOME/old/<version>/`, a folder of its own that nothing overwrites,
+  deletes nothing, and goes on as on a new machine; one that stopped partway goes on in
+  the same folder, named `<version>.partial` until it holds everything, and offers no
+  release to go back to. The old name is offered on the
+  Kernel page. It refuses while a kernel is running. A request from elsewhere is
+  told to continue on the machine itself.
+  An application page left open, as the one the update was started from, is sent
+  to the installer by its next poll.
 * **Download** installs what is due, one job each, from one list: the kernel
   (`juice`) then the agent (`juice-agent`), each at the release this UI was
   verified against. A component **missing** from `$JUICE_HOME/bin`, or **older
@@ -1377,7 +1402,7 @@ words, polled until it answers. Nothing on that card names an installation.
   after another. A failed download is shown and tried again every 10 s. It comes
   first because the World page lists the worlds by running the kernel program.
   Before a first boot the step also checks the kernel binary: one older than its
-  release would ignore the recovery key, so the step stops there, naming both
+  release would ignore the recovery phrase, so the step stops there, naming both
   versions, until Try again.
 * **World** is one of those `juice kernel worlds` lists (the world files and the
   shipped worlds not yet written), chosen from radio choices, each with its
@@ -1406,23 +1431,27 @@ words, polled until it answers. Nothing on that card names an installation.
   its keys are held in memory like the password, and the first boot is given
   them in its `config.json`.
 * **Recovery phrase** comes before the work, so the person holds it before the
-  key is enrolled: the UI generates it as at signup and the first boot passes
-  only its public key. It is one phrase for the whole sequence, across Back and
+  kernel exists: the UI generates it as at signup and the first boot passes it.
+  The kernel's one key derives from it, so it restores the kernel's identity,
+  resets the superuser's password and, on a chain, controls the kernel's money,
+  as the page states. It is one phrase for the whole sequence, across Back and
   across a failed boot, shown on its page alone, acknowledged with its "I
-  understand" box, held in memory and stored nowhere, and dropped when the
+  have saved this phrase" box, held in memory and stored nowhere, and dropped when the
   sequence ends.
 * **Summary** names the world, the kernel name, the superuser, the assistant, the chat and
   embedding models and the kernel's home, and is the point of no return: nothing before it writes anything. On a
   world whose rail is a chain (`evm`) it states, behind the alert icon, that the
-  vault's keys live in that home and that losing it loses the money. Its button
+  recovery phrase controls the money the kernel holds there and that its
+  accounts and balances are kept in that home. Its button
   is **Install**.
 * **Install** runs the first boot and nothing else. The first boot writes that
   home's `config.json` and serves the kernel once with the password and the
-  recovery public key in the child's environment, the kernel's documented
+  recovery phrase in the child's environment, the kernel's documented
   non-interactive first boot. It never touches a kernel: it writes only into a
   home holding no `juice.db` that no server holds (`serve.lock`), refuses any
   directory holding `juice.db` whatever its configuration says, and deletes
-  nothing, even when it fails. One first boot runs at a time per installation,
+  nothing; a `kernel.key` in a home with no database, left by a boot that stopped
+  between the two, is renamed, since the kernel would refuse any phrase but that key's. One first boot runs at a time per installation,
   under an exclusive lock in the UI's own state directory. A boot that made no
   kernel returns to the Kernel page with the kernel's words, where the password
   is typed again; one that made a kernel goes on to the launch, which starts it,

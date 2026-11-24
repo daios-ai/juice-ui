@@ -407,7 +407,7 @@ func TestAddressIsSentVerbatim(t *testing.T) {
 func TestAdminDepositIsUserOnly(t *testing.T) {
 	f := newFake()
 	defer f.close()
-	const key = "tETeglMY_o_yysBZ7oa2wc4-yHDRKw5uHruHcQZT2cA"
+	const key = "tETeglMY_o_yysBZ7oa2Awc4-yHDRKw5uHruHcQZT2cA"
 	f.status, f.reply = 404, `{"code":"not_found","error":"`+key+` is not a user here"}`
 	_, err := f.client().AdminDeposit(context.Background(), "tok", key, 100, "r", "")
 	if err == nil {

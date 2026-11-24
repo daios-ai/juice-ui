@@ -666,7 +666,7 @@ func TestCallOutcomeTermsChanged(t *testing.T) {
 }
 
 func TestShortKey(t *testing.T) {
-	long := "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdefg"
+	long := "ABCDEFGHIJKLMNOPQRSTAUVWXYZ0123456789abcdefg"
 	if got, want := client.ShortKey(long), "ABCDEFGHIJ…defg"; got != want {
 		t.Errorf("ShortKey(long) = %q want %q", got, want)
 	}
@@ -679,7 +679,7 @@ func TestShortKey(t *testing.T) {
 	// One kernel, one abbreviation, wherever it is named: the header's
 	// fingerprint and a peer named inside an error sentence must be the same
 	// string, or a reader cannot tell they are the same kernel.
-	key := "1MutJi6KXZIWlxJMiIKsu4gR6-R4ACoEJwP7sNT_mq4"
+	key := "1MutJi6KXZIWlxJMiIKsAu4gR6-R4ACoEJwP7sNT_mq4"
 	ke := &client.KernelError{Meta: map[string]json.RawMessage{"peer": json.RawMessage(`"` + key + `"`)}}
 	if client.ShortKey(key) != ke.PeerDisplay() {
 		t.Errorf("the same key abbreviates two ways: header %q vs sentence %q",
@@ -1262,7 +1262,7 @@ func TestNamedRowsCarryNoVerbs(t *testing.T) {
 // as the name with its copy and the Key cell is empty. A nickname is the name
 // marked ~, never in parentheses.
 func TestEveryKernelRowCarriesItsKey(t *testing.T) {
-	const key = "lHynnkVtXrzrfAHCPgrjzctyjQqkehrUz0BZp7Pxnmw"
+	const key = "lHynnkVtXrzrfAHCPgrjAzctyjQqkehrUz0BZp7Pxnmw"
 	short := client.ShortKey(key)
 	keyCell := `<td class="mono" data-label="Key"><span class="name mono" title="` + key + `">` + short + `</span> <button`
 	unbound := renderPeersPage(t, []client.Peer{{PublicKey: key}}, false)
@@ -1299,7 +1299,7 @@ func TestEveryKernelRowCarriesItsKey(t *testing.T) {
 // the one verb, the same .btn as on the kernel's page, into its page with the
 // rename modal open; a named row and this kernel's row carry nothing (§6.6).
 func TestNameOpenerOnlyOnUnboundRows(t *testing.T) {
-	const key = "X7lFapV-gKReFfvyDdaHO0pZrfSyhb9aA-CS_DIWvp8"
+	const key = "X7lFapV-gKReFfvyDdaHAO0pZrfSyhb9aA-CS_DIWvp8"
 	body := renderPeersPage(t, []client.Peer{
 		{Nickname: "tk", PublicKey: key},
 		{Petname: "pb", PublicKey: "KB", Traded: true},
@@ -1377,7 +1377,7 @@ func TestPoolEvidence(t *testing.T) {
 // The prefill is the kernel's own auto-bind preference: petname > free
 // nickname > k-<key8>, suffixed 2, 3, … to the lowest free number.
 func TestPetnameSuggestion(t *testing.T) {
-	const key = "X7lFapV-gKReFfvyDdaHO0pZrfSyhb9aA-CS_DIWvp8"
+	const key = "X7lFapV-gKReFfvyDdaHAO0pZrfSyhb9aA-CS_DIWvp8"
 	taken := func(names ...string) func(string) bool {
 		set := map[string]bool{}
 		for _, n := range names {
@@ -1627,18 +1627,18 @@ func TestNameLinksEachPart(t *testing.T) {
 		}
 		return rec.Body.String()
 	}
-	remote := client.Party{Address: "alice@B/greet", Principal: "u1@" + strings.Repeat("k", 43) + "/greet"}
+	remote := client.Party{Address: "alice@B/greet", Principal: "u1@" + strings.Repeat("k", client.KeyLen) + "/greet"}
 	body := render(r.brief(remote))
-	if !strings.Contains(body, `<span class="owner"><a href="/browse?owner=alice%40`+strings.Repeat("k", 43)+`">alice@B</a></span>`) {
+	if !strings.Contains(body, `<span class="owner"><a href="/browse?owner=alice%40`+strings.Repeat("k", client.KeyLen)+`">alice@B</a></span>`) {
 		t.Errorf("an owner, another kernel's too, links to its actions by key: %s", body)
 	}
-	if !strings.Contains(body, `/<a href="/actions?ref=alice%40`+strings.Repeat("k", 43)+`%2Fgreet">greet</a>`) {
+	if !strings.Contains(body, `/<a href="/actions?ref=alice%40`+strings.Repeat("k", client.KeyLen)+`%2Fgreet">greet</a>`) {
 		t.Errorf("the path links to the action's page by its address: %s", body)
 	}
 	if got := render(subject(r.brief(remote))); strings.Contains(got, "/actions?") || !strings.Contains(got, "/browse?owner=") {
 		t.Errorf("an action under its own title links its owner, not itself: %s", got)
 	}
-	if got := render(plain(r.brief(client.Party{Address: "bob@" + strings.Repeat("k", 43) + "/x"}))); strings.Contains(got, "<a ") || strings.Contains(got, "data-copy") {
+	if got := render(plain(r.brief(client.Party{Address: "bob@" + strings.Repeat("k", client.KeyLen) + "/x"}))); strings.Contains(got, "<a ") || strings.Contains(got, "data-copy") {
 		t.Errorf("inside a link a name has no link and no copy: %s", got)
 	}
 	if got := render(r.record(remote, "A1")); !strings.Contains(got, `href="/actions?id=A1&amp;ref=alice%40`) {
@@ -1650,11 +1650,11 @@ func TestNameLinksEachPart(t *testing.T) {
 }
 
 // A raw kernel key never renders whole in a name: an action of a kernel no
-// petname names is owner@<43-char key>/name, unreadable. The key is cut short
+// petname names is owner@<key>/name, unreadable. The key is cut short
 // by client.ShortKey, the whole address stays in the title and on the copy
 // control; a petname is not key-shaped and renders whole, with nothing to copy.
 func TestNameTruncatesRawKernelKeys(t *testing.T) {
-	const key = "esKD_l0c_1xaJ9rP-C8woBZamNPvIYFE_FOMSCi4C3I"
+	const key = "esKD_l0c_1xaJ9rP-C8wAoBZamNPvIYFE_FOMSCi4C3I"
 	r := &Renderer{identity: playKernel}
 	n := r.brief(client.Party{Address: "sys@" + key + "/llm/embed"})
 	if n.Kernel != client.ShortKey(key) || n.Title != "sys@"+key+"/llm/embed" || n.Copy != "sys@"+key+"/llm/embed" || n.Path != "llm/embed" {
@@ -1941,7 +1941,7 @@ func TestProxyRowsOfferNoLifecycleVerbs(t *testing.T) {
 // beside it; a key is global but unreadable, so it renders cut short with the
 // whole value recoverable.
 func TestKernelPartyPrefersPetnameAndTruncatesKeys(t *testing.T) {
-	const key = "esKD_l0c_1xaJ9rP-C8woBZamNPvIYFE_FOMSCi4C3I" // 43 chars, as the kernel mints them
+	const key = "esKD_l0c_1xaJ9rP-C8wAoBZamNPvIYFE_FOMSCi4C3I" // as the kernel mints them
 	r := &Renderer{identity: playKernel}
 	if bound := r.name(kernelParty("daios", "alpha", key)); bound.Kernel != "daios" || bound.Copy != "" || bound.Key != "" || bound.Handle != "" {
 		t.Errorf("a bound petname renders whole: %+v", bound)
@@ -1961,7 +1961,7 @@ func TestKernelPartyPrefersPetnameAndTruncatesKeys(t *testing.T) {
 // key claims the same nickname; a roomy one always names it; a petname never
 // clashes.
 func TestBriefNamesTheKeyOnAClash(t *testing.T) {
-	k1, k2 := strings.Repeat("a", 39)+"AAAA", strings.Repeat("b", 39)+"BBBB"
+	k1, k2 := strings.Repeat("a", client.KeyLen-4)+"AAAA", strings.Repeat("b", client.KeyLen-4)+"BBBB"
 	r := &Renderer{identity: playKernel}
 	one := client.Party{Address: "bob@" + k1, Principal: "u1@" + k1, Nickname: "alpha"}
 	two := client.Party{Address: "ann@" + k2, Principal: "u2@" + k2, Nickname: "alpha"}
@@ -1996,7 +1996,7 @@ func TestBriefNamesTheKeyOnAClash(t *testing.T) {
 // ~alpha, never (alpha), and a decision on it names the key. The login page's
 // key carries its copy.
 func TestNicknameIsAClaim(t *testing.T) {
-	const key = "X7lFapV-gKReFfvyDdaHO0pZrfSyhb9aA-CS_DIWvp8"
+	const key = "X7lFapV-gKReFfvyDdaHAO0pZrfSyhb9aA-CS_DIWvp8"
 	short := client.ShortKey(key)
 	r, err := NewRenderer(playKernel)
 	if err != nil {
@@ -2263,7 +2263,7 @@ func TestEvidenceReadsAsTheStatsLine(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	other := strings.Repeat("O", 43) // key-shaped
+	other := strings.Repeat("O", client.KeyLen) // key-shaped
 	a := client.Action{ID: "P", Action: client.Party{Address: "seller@k-4lnq/greet"}, Kind: "remote_proxy", Active: true, Evidence: &client.ActionEvidence{
 		LocalExperience:  &client.Stats{Uses: 2, Successes: 1},
 		ProviderReported: &client.Evidence{IssuerPublicKey: "PROVIDERKEY0000", SubjectActionID: "R1", Uses: 4, Successes: 1, AvgLatencyMs: 690.5},
@@ -2531,7 +2531,7 @@ func TestShortAddrAbbreviatesAChainAddressAndAKey(t *testing.T) {
 	if got := shortAddr("0x70997970C51812dc3A010C7d01b50e0d17dc79C8"); got != "0x7099…79C8" {
 		t.Errorf("shortAddr = %q", got)
 	}
-	if got := shortAddr("bob@" + strings.Repeat("k", 39) + "WXYZ"); got != "bob@kkkkkkkkkk…WXYZ" {
+	if got := shortAddr("bob@" + strings.Repeat("k", client.KeyLen-4) + "WXYZ"); got != "bob@kkkkkkkkkk…WXYZ" {
 		t.Errorf("shortAddr of a key address = %q", got)
 	}
 	for _, s := range []string{"0xvault", "alice@k", ""} {

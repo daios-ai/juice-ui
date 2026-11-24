@@ -12,8 +12,8 @@ import (
 // Seed-phrase account recovery (kernel §12). The BFF is the *client* here: it
 // generates the 12-word BIP-39 mnemonic locally at signup, sends the kernel only
 // the derived public key, and shows the phrase once. A lost password is reset by
-// signing a server nonce with the phrase-derived key. The mnemonic never reaches
-// the kernel.
+// signing a server nonce with the phrase-derived key. A person's
+// mnemonic never reaches the kernel.
 //
 // Derivation is pinned by API.md and must match the CLI byte-for-byte, else a
 // phrase issued here cannot recover via the CLI and vice versa:
@@ -43,19 +43,9 @@ type recoveryChallenge struct {
 // or derived at signup.
 const recoverySetupFailed = "Couldn't set up account recovery. Please try again."
 
-// NewRecoveryPhrase is a fresh recovery phrase and the public key it derives,
-// the one a kernel enrolls: the installer's first boot passes only the key, as
-// signup does.
-func NewRecoveryPhrase() (phrase, publicKey string, err error) {
-	if phrase, err = generateMnemonic(); err != nil {
-		return "", "", err
-	}
-	publicKey, err = recoveryPubKey(phrase)
-	return phrase, publicKey, err
-}
-
-// generateMnemonic returns a fresh 12-word BIP-39 mnemonic (128-bit entropy).
-func generateMnemonic() (string, error) {
+// NewRecoveryPhrase is a fresh 12-word BIP-39 mnemonic (128-bit entropy): a
+// person's at signup, a kernel's at its first boot.
+func NewRecoveryPhrase() (string, error) {
 	entropy, err := bip39.NewEntropy(128)
 	if err != nil {
 		return "", fmt.Errorf("recovery entropy: %w", err)

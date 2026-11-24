@@ -8,8 +8,9 @@
 <div class="install-step">
   <h2>{{.Title}}</h2>
   <div class="install-content stack">
-    <p>No kernel at <span class="mono">{{.URL}}</span>. Create one at its terminal:</p>
-    <pre class="json">{{.Command}}</pre>
+    {{if eq .Step "old"}}<p>This Juice cannot serve the kernel at <span class="mono">{{.URL}}</span>. Continue in a browser on the machine it runs on.</p>
+    {{else}}<p>No kernel at <span class="mono">{{.URL}}</span>. Create one at its terminal:</p>
+    <pre class="json">{{.Command}}</pre>{{end}}
   </div>
 </div>
 {{else}}
@@ -18,7 +19,14 @@
   <h2>{{.Title}}</h2>
   <div class="install-content stack">
     {{if .Error}}{{template "_error" .Error}}{{end}}
-    {{if eq .Step "world"}}
+    {{if eq .Step "old"}}
+    <p>This Juice cannot serve the kernel{{with .Old.Handle}} <span class="mono">{{.}}</span>{{end}}, made by Juice {{.Old.Version}}. Kernels changed their identity in 0.22, and the network has moved on.</p>
+    <p>A new kernel will be created. The old kernel, with its accounts, balances, agents and rooms, is kept in <span class="mono">{{.Old.Kept}}</span> and is not carried over.</p>
+    {{if .Old.Chain}}<p class="banner banner-error"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#alert"/></svg> <span>The money it holds on the chain stays at its old address, whose key is kept in that folder.</span></p>{{end}}
+    {{with .Old.Release}}<p>To keep the old kernel instead, stop Juice and run:</p>
+    {{$cmd := printf "curl -fsSL https://raw.githubusercontent.com/daios-ai/juice-ui/main/install.sh | sh -s -- %s" .}}<pre class="json">{{$cmd}}</pre>
+    <div class="row compact">{{template "_copy" (copyOf "command" $cmd)}}</div>{{end}}
+    {{else if eq .Step "world"}}
     <fieldset class="field">
       <legend>World</legend>
       <p class="help">The network this kernel joins, for life.</p>
@@ -44,9 +52,9 @@
     {{else if eq .Step "models"}}
     {{template "_models_form" .Models}}
     {{else if eq .Step "phrase"}}
-    <p>Please save the following recovery phrase. It is the only way to recover the superuser's password. <strong>Never share it with anyone.</strong></p>
+    <p>Please save the following recovery phrase. It restores this kernel's identity and resets the superuser's password, and on a blockchain network it controls the kernel's money. <strong>Never share it with anyone.</strong></p>
     {{template "_phrase_words" .}}
-    <label><input type="checkbox" name="understand" required> I understand this phrase is the only way to recover the superuser's password.</label>
+    <label><input type="checkbox" name="understand" required> I have saved this phrase.</label>
     {{else if eq .Step "summary"}}
     <dl class="kv">
       <dt>World</dt><dd><span class="mono">{{.World.Name}}</span>{{with .World.Description}} — {{.}}{{end}}</dd>
@@ -57,11 +65,11 @@
       <dt>Embedding model</dt><dd>{{.Models.Embed.Summary}}</dd>
       <dt>Kernel home</dt><dd class="mono">{{.Home}}</dd>
     </dl>
-    {{if eq .World.Rail "evm"}}<p class="banner banner-error"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#alert"/></svg> <span>The keys of this kernel's vault are kept in <span class="mono">{{.Home}}</span>. Losing that directory loses the money the vault holds.</span></p>{{end}}
+    {{if eq .World.Rail "evm"}}<p class="banner banner-error"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#alert"/></svg> <span>The recovery phrase controls the money this kernel holds on the chain. Its accounts and balances are kept in <span class="mono">{{.Home}}</span>.</span></p>{{end}}
     {{end}}
   </div>
   <div class="install-actions cluster">
-    <button class="btn-primary" type="submit">{{if eq .Step "summary"}}Install{{else}}Next{{end}}</button>
+    <button class="btn-primary" type="submit">{{if eq .Step "old"}}Create a new kernel{{else if eq .Step "summary"}}Install{{else}}Next{{end}}</button>
     {{if eq .Step "models"}}<button class="btn" type="submit" name="list" value="1" formnovalidate>List models</button>{{end}}
     {{if .Back}}<button class="btn" type="submit" formaction="/install/back" formnovalidate>Back</button>{{end}}
   </div>

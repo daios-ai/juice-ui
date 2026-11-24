@@ -185,7 +185,7 @@ func joinAddress(handle, kernel, path string) string {
 
 // claimed reports that the party's kernel is written by its key, so no petname
 // names it here, and that it calls itself something.
-func (p Party) claimed(kernel string) bool { return p.Nickname != "" && len(kernel) == KeyLen }
+func (p Party) claimed(kernel string) bool { return p.Nickname != "" && IsKey(kernel) }
 
 // Tokens is an access/refresh token pair. Stored server-side only (R1.2).
 type Tokens struct {
@@ -589,21 +589,22 @@ type Health struct {
 	BlockchainAddress  string `json:"blockchain_address"`
 }
 
-// KeyLen is the length of a kernel's public key: 32 bytes, base64url-encoded.
-// A name of exactly this length is a key rather than a petname or a handle —
-// the three name classes are disjoint by shape (kernel §D15).
-const KeyLen = 43
+// KeyLen is the length of a kernel's public key: 33 bytes, base64url-encoded.
+const KeyLen = 44
+
+// IsKey reports that a kernel's name is its key rather than a petname or a
+// handle: the three name classes are disjoint by shape (kernel §D15).
+func IsKey(name string) bool { return len(name) == KeyLen }
 
 // ShortKey abbreviates a kernel's public key for display. A key is the
 // canonical global name and unreadable in full, so it shows head…tail: both
 // ends carry distinguishing signal, and the result is still the value to
 // eyeball against the original (no hashing). This is the single definition, so
 // one kernel abbreviates identically everywhere it is named — an error
-// sentence, the header, a card. Anything that is not key-shaped (KeyLen
-// characters) — a petname, a handle — passes unchanged, so any kernel name may
-// be given.
+// sentence, the header, a card. Anything that is not key-shaped (IsKey) —
+// a petname, a handle — passes unchanged, so any kernel name may be given.
 func ShortKey(key string) string {
-	if len(key) != KeyLen {
+	if !IsKey(key) {
 		return key
 	}
 	return key[:10] + "…" + key[len(key)-4:]

@@ -56,7 +56,7 @@ func mutationTarget(r *http.Request) string {
 
 func fakeHealth(mux *http.ServeMux) {
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"status":"ok","handle":"testnet","public_key":"ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdefg",
+		w.Write([]byte(`{"status":"ok","handle":"testnet","public_key":"ABCDEFGHIJKLMNOPQRSTAUVWXYZ0123456789abcdefg",
 		 "network":"play","network_fingerprint":"D1","decimals":0,"symbol":"credits","blockchain_address":""}`))
 	})
 }
@@ -303,7 +303,7 @@ func authKernel() *httptest.Server {
 		// the route says which namespace it takes, so a name that exists in the
 		// other one is simply not found.
 		h := r.PathValue("handle")
-		if len(h) >= 43 {
+		if len(h) >= client.KeyLen {
 			w.WriteHeader(http.StatusNotFound)
 			w.Write([]byte(`{"code":"not_found","error":"` + h + ` is not a user here"}`))
 			return
@@ -344,7 +344,7 @@ func authKernel() *httptest.Server {
 		// ledger entry it wrote; a replay returns that same entry. Ledger
 		// entries carry no id. A peer key here is not a user (§2).
 		h := r.PathValue("handle")
-		if len(h) >= 43 {
+		if len(h) >= client.KeyLen {
 			w.WriteHeader(http.StatusNotFound)
 			w.Write([]byte(`{"code":"not_found","error":"` + h + ` is not a user here"}`))
 			return
@@ -746,7 +746,7 @@ func TestDiscoverNarrowsToAnOwner(t *testing.T) {
 
 	// A local owner reached by key with no action listed is headed by this
 	// kernel's name, not its key.
-	if head := getBody(t, cl, srv.URL+"/browse?owner=sys@ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdefg"); !strings.Contains(head, `<h2><span class="name mono"`) || !strings.Contains(head, `<span class="owner">sys@testnet</span>`) {
+	if head := getBody(t, cl, srv.URL+"/browse?owner=sys@ABCDEFGHIJKLMNOPQRSTAUVWXYZ0123456789abcdefg"); !strings.Contains(head, `<h2><span class="name mono"`) || !strings.Contains(head, `<span class="owner">sys@testnet</span>`) {
 		t.Error("a local owner's page is headed by its name, not its key")
 	}
 	// Someone else's name: caller-visible active set only — no private/inactive.
@@ -2997,7 +2997,7 @@ func TestUpdateActionInvalidSchemaRejected(t *testing.T) {
 
 // heldKey is a public key as a task held on another kernel names its holder
 // when no petname is bound for it (4dbfedd).
-const heldKey = "K98AJeQ6631CO6LJ73nK2PiQW4qY3Nb3eqquXPHYNJ8"
+const heldKey = "K98AJeQ6631CO6LJ73nKA2PiQW4qY3Nb3eqquXPHYNJ8"
 
 // taskRows are the tasks bob@testnet may list, one of each kind the inbox
 // distinguishes (requirements.md §6.3).

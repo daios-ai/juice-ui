@@ -437,7 +437,7 @@ func New(o Options) (http.Handler, error) {
 	}
 	mux.HandleFunc("GET /admin/peers", s.requireSuperuser(s.getAdminPeers))
 	// The literal /inspect pattern is more specific than /{key}, so it wins; a
-	// peer key is 43 base64url chars and can never collide with it.
+	// peer key is longer (client.KeyLen) and can never collide with it.
 	mux.HandleFunc("GET /admin/peers/inspect", s.requireSuperuser(s.getAdminInspectByKey))
 	mux.HandleFunc("GET /admin/peers/{key}", s.requireSuperuser(s.getAdminInspect))
 	mux.HandleFunc("POST /admin/peers/suspend", s.requireSuperuser(s.postAdminPeerSuspend))

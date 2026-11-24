@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -117,7 +118,7 @@ case "$1 $2" in
 "--version "*) echo "juice version v9.9.9 (test)";;
 "kernel setup") mkdir -p "$JUICE_HOME/schemas"; echo '{}' > "$JUICE_HOME/schemas/config.schema.json";;
 "kernel worlds") echo '[{"world":"play","description":"no real money","file":""},{"world":"bad","error":"'"$JUICE_HOME"'","file":"x"}]';;
-kernel*) echo "boot $JUICE_HOME ${JUICE_BOOTSTRAP_PASSWORD:+pw} ${JUICE_BOOTSTRAP_RECOVERY_KEY:+key}" >&2
+kernel*) echo "boot $JUICE_HOME ${JUICE_BOOTSTRAP_PASSWORD:+pw} ${JUICE_BOOTSTRAP_PHRASE:+phrase}" >&2
         mkdir -p "$JUICE_HOME/worlds"; echo '{"rail":"manual"}' > "$JUICE_HOME/worlds/$3.json"
         echo "server.ready" >&2; exit 0;;
 esac
@@ -259,13 +260,26 @@ func installFake(t *testing.T, i *Installation) {
 }
 
 // Create writes the home and boots once with the password and the recovery
-// key in the child's environment only; it returns once the kernel answers.
-func TestCreateBootsWithTheKeyAndWaitsForHealth(t *testing.T) {
+// phrase in the child's environment only; it returns once the kernel answers.
+// A kernel.key in a home with no database, left by a boot that stopped between
+// the kernel's two writes, is set aside before the boot: the kernel would
+// refuse any phrase but that key's.
+func TestCreateBootsWithThePhraseAndWaitsForHealth(t *testing.T) {
 	var up atomic.Bool
 	i := &Installation{Home: t.TempDir(), URL: health(t, &up)}
 	installFake(t, i)
+	left := filepath.Join(i.Home, "kernels", "play", "kernel.key")
+	if err := os.MkdirAll(filepath.Dir(left), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(left, []byte("another phrase's key"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	i.launch = func(ctx context.Context, bin string, args, env []string, stderr *os.File) (<-chan struct{}, error) {
-		if !slices.Contains(env, "JUICE_BOOTSTRAP_PASSWORD=secret123") || !slices.Contains(env, "JUICE_BOOTSTRAP_RECOVERY_KEY=PUBKEY") {
+		if exists(left) {
+			t.Error("a key left without a database is set aside before the boot")
+		}
+		if !slices.Contains(env, "JUICE_BOOTSTRAP_PASSWORD=secret123") || !slices.Contains(env, "JUICE_BOOTSTRAP_PHRASE=twelve words") {
 			t.Errorf("the child's environment carries both: %v", env)
 		}
 		fmt.Fprintln(stderr, "server.ready")
@@ -273,8 +287,11 @@ func TestCreateBootsWithTheKeyAndWaitsForHealth(t *testing.T) {
 		return endsWith(ctx), nil
 	}
 	extra := map[string]any{"native": map[string]any{"llm": map[string]any{"chat": "m"}}, "kernel_handle": "not-this"}
-	if err := i.Create("play", "alpha", "secret123", "PUBKEY", extra); err != nil {
+	if err := i.Create("play", "alpha", "secret123", "twelve words", extra); err != nil {
 		t.Fatal(err)
+	}
+	if kept, _ := filepath.Glob(left + ".*"); len(kept) != 1 {
+		t.Errorf("the key set aside is kept: %v", kept)
 	}
 	if !up.Load() {
 		t.Error("Create returns only once the kernel answers")
@@ -285,14 +302,14 @@ func TestCreateBootsWithTheKeyAndWaitsForHealth(t *testing.T) {
 			t.Errorf("config.json lacks %s: %s", want, cfg)
 		}
 	}
-	if strings.Contains(string(cfg), "secret123") || strings.Contains(string(cfg), "PUBKEY") {
+	if strings.Contains(string(cfg), "secret123") || strings.Contains(string(cfg), "twelve words") {
 		t.Errorf("config.json holds no credential: %s", cfg)
 	}
 	if st, _ := os.Stat(filepath.Join(i.Home, "kernels", "play", "config.json")); st.Mode().Perm() != 0o600 {
 		t.Errorf("config.json mode = %v, want 0600", st.Mode().Perm())
 	}
 	log, _ := os.ReadFile(filepath.Join(i.Home, "ui", "kernel.log"))
-	if !strings.Contains(string(log), "server.ready") || strings.Contains(string(log), "secret123") || strings.Contains(string(log), "PUBKEY") {
+	if !strings.Contains(string(log), "server.ready") || strings.Contains(string(log), "secret123") || strings.Contains(string(log), "twelve words") {
 		t.Errorf("the boot's output goes to kernel.log, without the credentials: %s", log)
 	}
 	// The real launcher hands the script both variables.
@@ -301,18 +318,18 @@ func TestCreateBootsWithTheKeyAndWaitsForHealth(t *testing.T) {
 	bootLog := filepath.Join(i.Home, "ui", "kernel.log")
 	answerOnce(&up, bootLog, "boot ")
 	os.WriteFile(filepath.Join(i.Home, "bin", "juice"), []byte(strings.Replace(fakeJuice, `echo "server.ready" >&2; exit 0`, `exec sleep 60`, 1)), 0o755)
-	if err := i.Create("play", "alpha", "secret123", "PUBKEY", nil); err != nil {
+	if err := i.Create("play", "alpha", "secret123", "twelve words", nil); err != nil {
 		t.Fatal(err)
 	}
 	log, _ = os.ReadFile(filepath.Join(i.Home, "ui", "kernel.log"))
-	if !strings.Contains(string(log), "boot "+i.Home+" pw key") {
+	if !strings.Contains(string(log), "boot "+i.Home+" pw phrase") {
 		t.Errorf("a first boot gets both variables: %s", log)
 	}
 	if w, _, _ := i.home(); w != "play" {
 		t.Error("the created home is this installation's kernel")
 	}
 	// An unfinished home on this port is finished or removed, not shadowed.
-	if err := i.Create("other", "alpha", "secret123", "PUBKEY", nil); err == nil || !strings.Contains(err.Error(), "unfinished kernel home") {
+	if err := i.Create("other", "alpha", "secret123", "twelve words", nil); err == nil || !strings.Contains(err.Error(), "unfinished kernel home") {
 		t.Errorf("a second home on the port is refused: %v", err)
 	}
 }
@@ -331,7 +348,7 @@ func TestCreateFailureDeletesNothing(t *testing.T) {
 		close(done)
 		return done, nil
 	}
-	if err := i.Create("play", "alpha", "short", "PUBKEY", nil); err == nil || !strings.Contains(err.Error(), "at least 8 characters") {
+	if err := i.Create("play", "alpha", "short", "twelve words", nil); err == nil || !strings.Contains(err.Error(), "at least 8 characters") {
 		t.Fatalf("err = %v", err)
 	}
 	if !exists(cfg) {
@@ -340,14 +357,14 @@ func TestCreateFailureDeletesNothing(t *testing.T) {
 	i.launch = func(ctx context.Context, _ string, _, _ []string, _ *os.File) (<-chan struct{}, error) {
 		return nil, fmt.Errorf("exec: not permitted")
 	}
-	if err := i.Create("play", "alpha", "secret123", "PUBKEY", nil); err == nil || !exists(cfg) {
+	if err := i.Create("play", "alpha", "secret123", "twelve words", nil); err == nil || !exists(cfg) {
 		t.Fatalf("a child that never starts is an error and deletes nothing: %v", err)
 	}
 	i.launch = func(ctx context.Context, bin string, args, env []string, stderr *os.File) (<-chan struct{}, error) {
 		up.Store(true)
 		return endsWith(ctx), nil
 	}
-	if err := i.Create("play", "beta", "secret123", "PUBKEY", nil); err != nil {
+	if err := i.Create("play", "beta", "secret123", "twelve words", nil); err != nil {
 		t.Fatal(err)
 	}
 	if b, _ := os.ReadFile(cfg); !strings.Contains(string(b), `"kernel_handle":"beta"`) {
@@ -356,7 +373,7 @@ func TestCreateFailureDeletesNothing(t *testing.T) {
 }
 
 // A first boot that got its answers and then failed to serve has created the
-// kernel: its database exists and the recovery key is enrolled, so Create
+// kernel: its database and its key exist, so Create
 // succeeds and the start reports why it does not serve.
 func TestCreateSucceedsOnceTheKernelExists(t *testing.T) {
 	var up atomic.Bool
@@ -369,7 +386,7 @@ func TestCreateSucceedsOnceTheKernelExists(t *testing.T) {
 		close(done)
 		return done, nil
 	}
-	if err := i.Create("play", "alpha", "secret123", "PUBKEY", nil); err != nil {
+	if err := i.Create("play", "alpha", "secret123", "twelve words", nil); err != nil {
 		t.Errorf("a kernel that exists is created: %v", err)
 	}
 	if w, b, _ := i.home(); w != "play" || !b {
@@ -401,20 +418,25 @@ func TestCreateNeverTouchesAKernel(t *testing.T) {
 	}
 	want, _ := os.ReadFile(cfg)
 	for _, w := range []string{"play", "other"} {
-		if err := i.Create(w, "alpha", "secret123", "PUBKEY", nil); err == nil || !strings.Contains(err.Error(), "never created again") {
+		if err := i.Create(w, "alpha", "secret123", "twelve words", nil); err == nil || !strings.Contains(err.Error(), "never created again") {
 			t.Errorf("Create(%s) beside a kernel: %v", w, err)
 		}
 	}
 	same(string(want))
+	key := filepath.Join(i.Home, "kernels", "play", "kernel.key")
+	os.WriteFile(key, []byte("K"), 0o600)
+	if err := i.Create("play", "alpha", "secret123", "twelve words", nil); err == nil || !exists(key) {
+		t.Errorf("a kernel's key is never removed: %v", err)
+	}
 	// The database decides, not the configuration: a kernel whose config.json
 	// listens elsewhere, or is unreadable, is still never created over.
 	os.WriteFile(cfg, []byte(`{"listen_addr":"127.0.0.1:1"}`), 0o600)
-	if err := i.Create("play", "alpha", "secret123", "PUBKEY", nil); err == nil || !strings.Contains(err.Error(), "never created again") {
+	if err := i.Create("play", "alpha", "secret123", "twelve words", nil); err == nil || !strings.Contains(err.Error(), "never created again") {
 		t.Errorf("a kernel listening elsewhere: %v", err)
 	}
 	same(`{"listen_addr":"127.0.0.1:1"}`)
 	os.WriteFile(cfg, []byte(`{not json`), 0o600)
-	if err := i.Create("play", "alpha", "secret123", "PUBKEY", nil); err == nil || !strings.Contains(err.Error(), "holds a kernel (juice.db)") {
+	if err := i.Create("play", "alpha", "secret123", "twelve words", nil); err == nil || !strings.Contains(err.Error(), "holds a kernel (juice.db)") {
 		t.Errorf("a kernel with an unreadable config.json: %v", err)
 	}
 	same(`{not json`)
@@ -428,7 +450,7 @@ func TestCreateNeverTouchesAKernel(t *testing.T) {
 	f, _ := os.Open(lock)
 	defer f.Close()
 	syscall.Flock(int(f.Fd()), syscall.LOCK_EX)
-	if err := j.Create("play", "alpha", "secret123", "PUBKEY", nil); err == nil || !strings.Contains(err.Error(), "a kernel holds") {
+	if err := j.Create("play", "alpha", "secret123", "twelve words", nil); err == nil || !strings.Contains(err.Error(), "a kernel holds") {
 		t.Errorf("a held home: %v", err)
 	}
 	if launched {
@@ -452,13 +474,13 @@ func TestFirstBootLockSerializes(t *testing.T) {
 		return endsWith(ctx), nil
 	}
 	first := make(chan error)
-	go func() { first <- i.Create("play", "alpha", "secret123", "PUBKEY", nil) }()
+	go func() { first <- i.Create("play", "alpha", "secret123", "twelve words", nil) }()
 	<-started
 	cfg := filepath.Join(i.Home, "kernels", "play", "config.json")
 	before, _ := os.ReadFile(cfg)
 	other := &Installation{Home: i.Home, URL: i.URL, launch: i.launch}
 	for _, in := range []*Installation{i, other} {
-		if err := in.Create("play", "beta", "secret123", "PUBKEY", nil); err == nil || err.Error() != "a first boot is already running" {
+		if err := in.Create("play", "beta", "secret123", "twelve words", nil); err == nil || err.Error() != "a first boot is already running" {
 			t.Errorf("a concurrent first boot: %v", err)
 		}
 	}
@@ -801,7 +823,7 @@ func TestAnUnreadableInstallationIsAnError(t *testing.T) {
 }
 
 // A first boot needs a kernel binary of at least Release, which honours the
-// recovery key; an older one kept for another kernel is refused, naming both
+// recovery phrase; an older one kept for another kernel is refused, naming both
 // versions.
 func TestCanCreateNamesAnOlderKernel(t *testing.T) {
 	i := inst(t, "http://127.0.0.1:4040")
@@ -936,7 +958,7 @@ func TestStartWaitsForAFirstBoot(t *testing.T) {
 		return done, nil
 	}
 	created := make(chan error, 1)
-	go func() { created <- i.Create("play", "alpha", "secret123", "PUBKEY", nil) }()
+	go func() { created <- i.Create("play", "alpha", "secret123", "twelve words", nil) }()
 	<-inBoot
 	started := make(chan error, 1)
 	go func() { started <- i.Start(context.Background()) }()
@@ -966,7 +988,7 @@ func TestStartWaitsForAFirstBoot(t *testing.T) {
 		t.Errorf("declared %d times", p.sets)
 	}
 	for _, e := range p.set["kernel-play"].Env {
-		if strings.Contains(e, "secret123") || strings.Contains(e, "PUBKEY") {
+		if strings.Contains(e, "secret123") || strings.Contains(e, "twelve words") {
 			t.Errorf("a program carries no secret: %v", e)
 		}
 	}
@@ -980,7 +1002,7 @@ func TestCreateEndsItsChild(t *testing.T) {
 	pidFile := filepath.Join(t.TempDir(), "pid")
 	answerOnce(&up, pidFile, "")
 	os.WriteFile(filepath.Join(i.Home, "bin", "juice"), []byte("#!/bin/sh\necho $$ > "+pidFile+"\nexec sleep 60\n"), 0o755)
-	if err := i.Create("play", "alpha", "secret123", "PUBKEY", nil); err != nil {
+	if err := i.Create("play", "alpha", "secret123", "twelve words", nil); err != nil {
 		t.Fatal(err)
 	}
 	b, _ := os.ReadFile(pidFile)
@@ -1001,7 +1023,7 @@ func TestCreateKillsAChildThatDoesNotEnd(t *testing.T) {
 	answerOnce(&up, mark, "")
 	os.WriteFile(filepath.Join(i.Home, "bin", "juice"), []byte("#!/bin/sh\ntrap '' TERM\necho up > "+mark+"\nwhile :; do sleep 0.05; done\n"), 0o755)
 	began := time.Now()
-	if err := i.Create("play", "alpha", "secret123", "PUBKEY", nil); err != nil {
+	if err := i.Create("play", "alpha", "secret123", "twelve words", nil); err != nil {
 		t.Fatal(err)
 	}
 	if took := time.Since(began); took > 5*time.Second {
@@ -1021,7 +1043,7 @@ func TestShutdownEndsAFirstBoot(t *testing.T) {
 		return endsWith(ctx), nil
 	}
 	created := make(chan error, 1)
-	go func() { created <- i.Create("play", "alpha", "secret123", "PUBKEY", nil) }()
+	go func() { created <- i.Create("play", "alpha", "secret123", "twelve words", nil) }()
 	<-started
 	shutdown()
 	i.WaitBoot()
@@ -1167,4 +1189,130 @@ func endsWith(ctx context.Context) <-chan struct{} {
 	done := make(chan struct{})
 	go func() { <-ctx.Done(); close(done) }()
 	return done
+}
+
+// A kernel served by a binary older than v0.22.0 cannot be carried over. Old
+// names it, and Retire moves it, the state bound to it and its binary to a
+// folder of their own under old/, deleting nothing; nothing is old after that.
+func TestRetireKeepsTheOldKernel(t *testing.T) {
+	i := inst(t, "http://127.0.0.1:4391")
+	write := func(p, s string, mode os.FileMode) {
+		t.Helper()
+		p = filepath.Join(i.Home, p)
+		if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(s), mode); err != nil {
+			t.Fatal(err)
+		}
+	}
+	binary := func(v string) { write("bin/juice", "#!/bin/sh\necho 'juice version "+v+" (x)'\n", 0o755) }
+	binary("v0.21.3")
+	if _, old := i.Old(); old {
+		t.Error("with no kernel there is nothing to retire")
+	}
+	writeHome(t, i, "polygon", "127.0.0.1:4391")
+	booted(t, i, "polygon")
+	binary("v0.22.1")
+	if _, old := i.Old(); old {
+		t.Error("a kernel of v0.22 is not old, its key missing or not")
+	}
+	binary("v0.21.3")
+	write("kernels/polygon/rail.key", "k", 0o600)
+	write("client/config.json", "{}", 0o600)
+	write("agents/a@x/config.json", "{}", 0o600)
+	write("services/chat/rooms.db", "r", 0o600)
+	write("supervisor/programs/kernel-polygon.json", "{}", 0o600)
+	write("worlds/polygon.json", "{}", 0o600)
+	write("ui/release", "v0.76.3\n", 0o600)
+	write("ui/state.json", "{}", 0o600)
+	away, _ := url.Parse("http://10.0.0.9:4040")
+	if _, old := (&Installation{Home: i.Home, URL: away}).Old(); old {
+		t.Error("a UI that follows a kernel elsewhere has none to retire")
+	}
+	k, old := i.Old()
+	if want := (OldKernel{Handle: "x", Version: "0.21.3", Release: "v0.76.3", Chain: true, Kept: filepath.Join(i.Home, "old", "0.21.3")}); !old || k != want {
+		t.Fatalf("Old = %+v %v, want %+v", k, old, want)
+	}
+	f, err := os.Create(filepath.Join(i.Home, "kernels", "polygon", "serve.lock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	syscall.Flock(int(f.Fd()), syscall.LOCK_EX)
+	if err := i.Retire(); err == nil || !strings.Contains(err.Error(), "a kernel is running in") || !exists(filepath.Join(i.Home, "client")) {
+		t.Errorf("a running kernel is not moved: %v", err)
+	}
+	f.Close()
+	if err := i.Retire(); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{"kernels/polygon/juice.db", "kernels/polygon/rail.key", "client/config.json", "agents/a@x/config.json",
+		"services/chat/rooms.db", "supervisor/programs/kernel-polygon.json", "worlds/polygon.json", "bin/juice"} {
+		if exists(filepath.Join(i.Home, p)) || !exists(filepath.Join(k.Kept, p)) {
+			t.Errorf("%s is kept in %s and nowhere else", p, k.Kept)
+		}
+	}
+	if !exists(filepath.Join(i.Home, "supervisor", "programs")) || !exists(filepath.Join(i.Home, "ui", "state.json")) {
+		t.Error("the supervisor's folder and the UI's own state stay")
+	}
+	if _, old := i.Old(); old {
+		t.Error("nothing is old once retired")
+	}
+	// A second one never lands on the first.
+	binary("v0.21.3")
+	writeHome(t, i, "play", "127.0.0.1:4391")
+	booted(t, i, "play")
+	if err := i.Retire(); err != nil || !exists(filepath.Join(i.Home, "old", "0.21.3-2", "kernels", "play", "juice.db")) {
+		t.Errorf("a second retired kernel has its own folder: %v", err)
+	}
+}
+
+// A retirement that stops partway is the same retirement when tried again, in
+// this run or after a restart: one folder holds the whole old kernel, whichever
+// move failed, and until then there is no release to go back to.
+func TestAStoppedRetirementResumesInOneFolder(t *testing.T) {
+	for n := range bound {
+		i := inst(t, "http://127.0.0.1:4391")
+		os.MkdirAll(filepath.Join(i.Home, "bin"), 0o700)
+		os.WriteFile(filepath.Join(i.Home, "bin", "juice"), []byte("#!/bin/sh\necho 'juice version v0.21.3 (x)'\n"), 0o755)
+		writeHome(t, i, "play", "127.0.0.1:4391")
+		booted(t, i, "play")
+		for _, p := range []string{"client", "agents", "services", "supervisor/programs", "worlds", "ui"} {
+			os.MkdirAll(filepath.Join(i.Home, p), 0o700)
+			os.WriteFile(filepath.Join(i.Home, p, "release"), []byte("v0.76.3"), 0o600)
+		}
+		move := i.rename
+		i.rename = func(from, to string) error {
+			if from == filepath.Join(i.Home, bound[n]) {
+				return errors.New("disk")
+			}
+			return os.Rename(from, to)
+		}
+		if err := i.Retire(); err == nil {
+			t.Fatalf("%s: the move failed", bound[n])
+		}
+		i.rename = move
+		os.MkdirAll(filepath.Join(i.Home, "supervisor", "programs"), 0o700) // as a restarted supervisor does
+		k, old := i.Old()
+		if !old || k.Kept != filepath.Join(i.Home, "old", "0.21.3") || k.Handle != "x" || k.Version != "0.21.3" {
+			t.Fatalf("%s: still the same old kernel: %+v %v", bound[n], k, old)
+		}
+		if n > 0 && k.Release != "" {
+			t.Errorf("%s: a kernel half moved cannot be gone back to", bound[n])
+		}
+		if err := i.Retire(); err != nil {
+			t.Fatalf("%s: %v", bound[n], err)
+		}
+		for _, p := range bound {
+			if !exists(filepath.Join(k.Kept, p)) {
+				t.Errorf("stopped at %s: %s is not in %s", bound[n], p, k.Kept)
+			}
+		}
+		if all, _ := os.ReadDir(filepath.Join(i.Home, "old")); len(all) != 1 {
+			t.Errorf("stopped at %s: %d folders", bound[n], len(all))
+		}
+		if _, old := i.Old(); old {
+			t.Errorf("stopped at %s: nothing is old once retired", bound[n])
+		}
+	}
 }

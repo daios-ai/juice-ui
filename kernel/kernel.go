@@ -55,7 +55,7 @@ type Component struct {
 // verified against, in the order the gate installs them: the kernel first,
 // since nothing is created or served without it.
 var Components = []Component{
-	{Repo: "daios-ai/juice", Name: "juice", Title: "kernel", Release: "v0.21.3", Programs: []string{"juice"}, Setup: []string{"juice", "kernel", "setup"}},
+	{Repo: "daios-ai/juice", Name: "juice", Title: "kernel", Release: "v0.22.1", Programs: []string{"juice"}, Setup: []string{"juice", "kernel", "setup"}},
 	{Repo: "daios-ai/juice-agent", Name: "juice-agent", Title: "agent", Release: "v0.11.1", Env: "JUICE_AGENT_BIN", Programs: []string{"juice-agent"}, Setup: []string{"juice-agent", "setup"}},
 }
 
@@ -65,7 +65,7 @@ var UI = Component{Repo: "daios-ai/juice-ui", Name: "juice-ui",
 	Programs: []string{"juice-ui", "juice-chat", "juice-supervisor"}, Setup: []string{"juice-supervisor", "setup"}}
 
 // Release is the kernel's: the release a first boot needs, since an older
-// kernel ignores the recovery key it is given.
+// kernel ignores the recovery phrase it is given.
 var Release = Components[0].Release
 
 // Releases is the release download base, under which each repository serves
@@ -96,8 +96,9 @@ type Installation struct {
 	// a fake. Nil means the real one.
 	launch func(ctx context.Context, bin string, args, env []string, out *os.File) (<-chan struct{}, error)
 	http   *http.Client
-	cfgMu  sync.Mutex // one reconfiguration at a time: compare, write, restart
-	boot   sync.Mutex // held through a first boot, and by each round of Start while it examines the installation
+	rename func(from, to string) error // a retirement's moves; tests make one fail. Nil means os.Rename
+	cfgMu  sync.Mutex                  // one reconfiguration at a time: compare, write, restart
+	boot   sync.Mutex                  // held through a first boot, and by each round of Start while it examines the installation
 }
 
 // Local reports whether the configured kernel is this installation's to manage:
@@ -229,7 +230,7 @@ func (i *Installation) home() (world string, booted bool, err error) {
 	if port == "" {
 		port = "80"
 	}
-	dirs, err := i.kernelDirs()
+	dirs, err := kernelDirs(i.Home)
 	if err != nil {
 		return "", false, err
 	}
@@ -435,21 +436,12 @@ func (i *Installation) Backup() error {
 	if err := os.RemoveAll(next); err != nil {
 		return err
 	}
-	dirs, err := i.kernelDirs()
+	dirs, err := kernels(i.Home)
 	if err != nil {
 		return err
 	}
 	for _, dir := range dirs {
-		if db, err := hasDB(dir); err != nil || !db {
-			if err != nil {
-				return err
-			}
-			continue
-		}
-		if held, err := supervisor.Held(filepath.Join(dir, "serve.lock")); err != nil || held {
-			if err == nil {
-				err = fmt.Errorf("a kernel is running in %s; stop it, then try again", dir)
-			}
+		if err := stopped(dir); err != nil {
 			return err
 		}
 		if err := copyTree(dir, filepath.Join(next, "kernels", filepath.Base(dir))); err != nil {
@@ -468,6 +460,120 @@ func (i *Installation) Backup() error {
 		i.Log.Info("kernel backed up", "to", done)
 	}
 	return os.Rename(next, done)
+}
+
+// oneKey is the first kernel release whose identity and payment address are one
+// key. It serves no kernel an earlier one made, and the network has moved to it.
+const oneKey = "v0.22.0"
+
+// OldKernel is a kernel this installation holds and Juice can no longer serve.
+type OldKernel struct {
+	Handle  string // its name; "" when its configuration does not say
+	Version string // the kernel release that served it
+	Release string // the UI release that last served it; "" when none is recorded
+	Chain   bool   // it holds the key of an address on a chain
+	Kept    string // where Retire moves it
+}
+
+// partial is the suffix of the folder a retirement fills; it is renamed to the
+// folder's own name once everything is in it, so a retirement that stopped is
+// recognised and goes on in the same folder.
+const partial = ".partial"
+
+// Old is the kernel Retire would move: one lives here and the kernel binary in
+// bin/, the one it was last served by, is older than oneKey, or a retirement
+// stopped before its end. A UI configured for a kernel elsewhere has none.
+func (i *Installation) Old() (OldKernel, bool) {
+	if !i.Local() {
+		return OldKernel{}, false
+	}
+	var k OldKernel
+	roots := []string{i.Home}
+	if part, _ := filepath.Glob(filepath.Join(i.Home, "old", "*"+partial)); len(part) > 0 {
+		k.Kept = strings.TrimSuffix(part[0], partial)
+		k.Version = filepath.Base(k.Kept)
+		roots = append(roots, part[0])
+	} else {
+		v := i.Version()
+		dirs, err := kernels(i.Home)
+		if err != nil || len(dirs) == 0 || v == "" || semver.Compare(v, oneKey) >= 0 {
+			return OldKernel{}, false
+		}
+		k.Version = strings.TrimPrefix(v, "v")
+		k.Kept = filepath.Join(i.Home, "old", k.Version)
+		for n := 2; exists(k.Kept); n++ {
+			k.Kept = filepath.Join(i.Home, "old", fmt.Sprintf("%s-%d", k.Version, n))
+		}
+		if b, err := os.ReadFile(filepath.Join(i.Home, "ui", "release")); err == nil {
+			k.Release = strings.TrimSpace(string(b))
+		}
+	}
+	for _, root := range roots {
+		dirs, _ := kernels(root)
+		for _, dir := range dirs {
+			var c struct {
+				Handle string `json:"kernel_handle"`
+			}
+			if b, err := os.ReadFile(filepath.Join(dir, "config.json")); err == nil && json.Unmarshal(b, &c) == nil && k.Handle == "" {
+				k.Handle = c.Handle
+			}
+			k.Chain = k.Chain || exists(filepath.Join(dir, "rail.key"))
+		}
+	}
+	return k, true
+}
+
+// bound is what belongs to the kernels of one network and has no use without
+// them: the sessions, the agents, the services, the programs that ran them, the
+// networks' definitions (whose seeds are kernels), the kernels, and the binary
+// that serves them.
+var bound = []string{"client", "agents", "services", filepath.Join("supervisor", "programs"), "worlds", "kernels", filepath.Join("bin", "juice")}
+
+// Retire moves the old kernel, with everything bound to it, to a folder of its
+// own under old/, so that the installation has no kernel. It deletes nothing,
+// refuses while a kernel is running, and goes on where one that stopped did.
+func (i *Installation) Retire() error {
+	i.boot.Lock()
+	defer i.boot.Unlock()
+	k, old := i.Old()
+	if !old {
+		return errors.New("no old kernel lives here")
+	}
+	dirs, err := kernels(i.Home)
+	if err != nil {
+		return err
+	}
+	for _, dir := range dirs {
+		if err := stopped(dir); err != nil {
+			return err
+		}
+	}
+	move := i.rename
+	if move == nil {
+		move = os.Rename
+	}
+	for _, p := range bound {
+		from, to := filepath.Join(i.Home, p), filepath.Join(k.Kept+partial, p)
+		if entries, err := os.ReadDir(from); err == nil && len(entries) == 0 && exists(to) {
+			continue // moved before, and made again, empty, by a supervisor since
+		}
+		if err := os.MkdirAll(filepath.Dir(to), 0o700); err != nil {
+			return err
+		}
+		if err := move(from, to); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
+	}
+	if err := os.MkdirAll(filepath.Join(i.Home, "supervisor", "programs"), 0o700); err != nil {
+		return err
+	}
+	if err := os.Rename(k.Kept+partial, k.Kept); err != nil {
+		return err
+	}
+	if i.Log != nil {
+		i.Log.Info("old kernel kept", "version", k.Version, "in", k.Kept)
+	}
+	return nil
 }
 
 // copyTree copies a file or a directory tree: directories and regular files
@@ -570,10 +676,10 @@ func untar(tgz []byte, name string) ([]byte, error) {
 
 // Create is the first boot: it writes kernels/<world>/config.json — the
 // operator's word, written in advance (the kernel's documented non-interactive
-// first boot) — and serves it once with the sys password and recovery public
-// key in the child's environment. It succeeds once the kernel exists: it
+// first boot) — and serves it once with the sys password and the recovery
+// phrase in the child's environment. It succeeds once the kernel exists: it
 // answers, or its database does, since the kernel creates that only with its
-// answers in hand, enrolling the recovery key. A boot that leaves no database
+// answers in hand. A boot that leaves no database
 // was declined, and its last words are the error. The caller holds the
 // recovery phrase. extra holds further keys of that file, the first boot's
 // other answers (the models, requirements.md §1); the three Create writes
@@ -581,12 +687,14 @@ func untar(tgz []byte, name string) ([]byte, error) {
 // cannot be a program's file, so Start has the supervisor start
 // the kernel without them.
 //
-// It writes only where no kernel lives and deletes nothing. One first boot runs
+// It writes only where no kernel lives and deletes nothing. A kernel.key in a
+// home with no database, left by a boot that stopped between the two, is
+// renamed: the kernel would refuse any phrase but that key's. One first boot runs
 // at a time per installation, under first-boot.lock. A kernel's home — any
 // directory holding juice.db, whatever its configuration says — is refused, as
 // is one a server holds. A home with no kernel, left by a boot the kernel
 // declined, is rewritten: that is how a refused answer is corrected.
-func (i *Installation) Create(world, handle, password, recoveryKey string, extra map[string]any) error {
+func (i *Installation) Create(world, handle, password, phrase string, extra map[string]any) error {
 	unlock, err := firstBootLock(filepath.Join(i.Home, "ui", "first-boot.lock"))
 	if err != nil {
 		return err
@@ -615,6 +723,10 @@ func (i *Installation) Create(world, handle, password, recoveryKey string, extra
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
+	key := filepath.Join(dir, "kernel.key")
+	if err := os.Rename(key, fmt.Sprintf("%s.%d", key, time.Now().UnixNano())); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
 	keys := map[string]any{}
 	for k, v := range extra {
 		keys[k] = v
@@ -635,7 +747,7 @@ func (i *Installation) Create(world, handle, password, recoveryKey string, extra
 	}
 	ctx, stop := context.WithCancel(parent)
 	defer stop()
-	done, err := i.serve(ctx, world, []string{"JUICE_BOOTSTRAP_PASSWORD=" + password, "JUICE_BOOTSTRAP_RECOVERY_KEY=" + recoveryKey})
+	done, err := i.serve(ctx, world, []string{"JUICE_BOOTSTRAP_PASSWORD=" + password, "JUICE_BOOTSTRAP_PHRASE=" + phrase})
 	if err != nil {
 		return err
 	}
@@ -645,8 +757,8 @@ func (i *Installation) Create(world, handle, password, recoveryKey string, extra
 	if err != nil && !exists(filepath.Join(dir, "juice.db")) {
 		return err
 	}
-	// The kernel exists: it was given its answers and enrolled the recovery
-	// key. Whether it serves is the start's to report.
+	// The kernel exists: it was given its answers. Whether it serves is the
+	// start's to report.
 	return nil
 }
 
@@ -902,10 +1014,10 @@ func (i *Installation) Booted() (world string, booted bool, err error) {
 	return i.home()
 }
 
-// kernelDirs are the directories under kernels/, none when it does not exist;
+// kernelDirs are the directories under home/kernels/, none when it does not exist;
 // one that exists and cannot be read is an error.
-func (i *Installation) kernelDirs() ([]string, error) {
-	root := filepath.Join(i.Home, "kernels")
+func kernelDirs(home string) ([]string, error) {
+	root := filepath.Join(home, "kernels")
 	entries, err := os.ReadDir(root)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, nil
@@ -920,6 +1032,34 @@ func (i *Installation) kernelDirs() ([]string, error) {
 		}
 	}
 	return dirs, nil
+}
+
+// kernels are the homes under home/kernels a kernel lives in: the directories holding juice.db.
+func kernels(home string) ([]string, error) {
+	dirs, err := kernelDirs(home)
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, dir := range dirs {
+		db, err := hasDB(dir)
+		if err != nil {
+			return nil, err
+		}
+		if db {
+			out = append(out, dir)
+		}
+	}
+	return out, nil
+}
+
+// stopped refuses a home a kernel is running in.
+func stopped(dir string) error {
+	held, err := supervisor.Held(filepath.Join(dir, "serve.lock"))
+	if err == nil && held {
+		err = fmt.Errorf("a kernel is running in %s; stop it, then try again", dir)
+	}
+	return err
 }
 
 // hasDB reports whether a kernel lives in dir (its juice.db); one whose
@@ -959,7 +1099,7 @@ func (i *Installation) Due(answers bool) []Component {
 }
 
 // CanCreate refuses a first boot the installed kernel binary cannot perform: an
-// absent one, or one older than Release, which ignores the recovery key a first
+// absent one, or one older than Release, which ignores the recovery phrase a first
 // boot passes; Due installs Release first, so this names a binary it could not
 // replace.
 func (i *Installation) CanCreate() error {

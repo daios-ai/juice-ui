@@ -135,7 +135,7 @@ func petnameSuggestion(petname, nickname, key string, taken func(string) bool) s
 		return petname
 	}
 	base := nickname
-	if base == "" || len(base) == client.KeyLen {
+	if base == "" || client.IsKey(base) {
 		base = "k-" + key[:min(8, len(key))]
 	}
 	if !taken(base) {

@@ -37,6 +37,7 @@ import (
 	"time"
 
 	"github.com/daios-ai/juice-ui/client"
+	"github.com/daios-ai/juice-ui/server"
 	"github.com/daios-ai/juice-ui/wallet"
 )
 
@@ -208,7 +209,11 @@ func boot(t *testing.T, led *ledger, bin, handle, world string, worldFile map[st
 	}
 	cmd := exec.Command(bin, "kernel", "serve", world, "--fed-listen-addrs", fmt.Sprintf("/ip4/127.0.0.1/tcp/%d", fport),
 		"--discovery-interval-seconds", "2", "--remote-retry-interval-seconds", "2")
-	cmd.Env = append(os.Environ(), "JUICE_HOME="+home, "JUICE_BOOTSTRAP_PASSWORD="+sysPassword)
+	phrase, err := server.NewRecoveryPhrase()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd.Env = append(os.Environ(), "JUICE_HOME="+home, "JUICE_BOOTSTRAP_PASSWORD="+sysPassword, "JUICE_BOOTSTRAP_PHRASE="+phrase)
 	cmd.Stdout, cmd.Stderr = log, log
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
@@ -641,7 +646,7 @@ func TestKernelContract(t *testing.T) {
 	done(bv, "unsuspend alpha", bv.c.AdminUnsuspendPeer(ctx, bsys, key))
 	get(bv, "inspect alpha", func() (client.Inspection, error) { return bv.c.AdminInspect(ctx, bsys, key) })
 	get(bv, "inspect a stranger", func() (client.Inspection, error) {
-		return bv.c.AdminInspect(ctx, bsys, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
+		return bv.c.AdminInspect(ctx, bsys, "A6cNHvNorZnpDVCUlumIjudATk9NNgN2v1IddpzwxN5G")
 	})
 
 	// A task alpha holds for a caller on bravo waits on that peer. Alpha has no

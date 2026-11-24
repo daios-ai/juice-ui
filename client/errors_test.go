@@ -211,10 +211,10 @@ func TestPeerRefusalIsNotTheUsersPermission(t *testing.T) {
 
 // A peer name arrives as whichever name the failing path had: a petname where
 // it knew one, the public key otherwise (both observed live on v0.12.24). A key
-// is 43 unreadable characters, so it is abbreviated before it reaches prose —
+// is 44 unreadable characters, so it is abbreviated before it reaches prose —
 // while the raw value stays available for logic.
 func TestPeerDisplayAbbreviatesAKeyButNotAPetname(t *testing.T) {
-	key := "1MutJi6KXZIWlxJMiIKsu4gR6-R4ACoEJwP7sNT_mq4" // 43 chars, as the kernel sends
+	key := "1MutJi6KXZIWlxJMiIKsAu4gR6-R4ACoEJwP7sNT_mq4" // as the kernel sends
 	if len(key) != KeyLen {
 		t.Fatalf("fixture is not a key-shaped name: %d chars", len(key))
 	}
@@ -226,7 +226,7 @@ func TestPeerDisplayAbbreviatesAKeyButNotAPetname(t *testing.T) {
 		t.Errorf("PeerDisplay() = %q, want the abbreviated key", got)
 	}
 	if msg := ke.UserMessage(); strings.Contains(msg, key) {
-		t.Errorf("a 43-char key must never reach a sentence whole: %q", msg)
+		t.Errorf("a key must never reach a sentence whole: %q", msg)
 	}
 	// A petname is already what a person recognises the kernel by.
 	named, _ := AsKernelError(classify(403, []byte(`{"code":"unauthorized","error":"peer bravo refused this call","meta":{"peer":"bravo"}}`)))

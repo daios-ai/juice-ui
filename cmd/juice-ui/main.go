@@ -224,6 +224,11 @@ func (k installation) Install(ctx context.Context, c installer.Component) error 
 	return fmt.Errorf("no component %s", c.Name)
 }
 
+func (k installation) Old() (installer.OldKernel, bool) {
+	o, old := k.Installation.Old()
+	return installer.OldKernel(o), old
+}
+
 func (k installation) Worlds() ([]installer.World, error) {
 	ws, err := k.Installation.Worlds()
 	out := make([]installer.World, len(ws))
@@ -235,13 +240,13 @@ func (k installation) Worlds() ([]installer.World, error) {
 
 // Create is the first boot, with the models chosen on their page written into
 // the kernel's first configuration.
-func (k installation) Create(world, handle, password, recoveryKey string, m any) error {
+func (k installation) Create(world, handle, password, phrase string, m any) error {
 	var extra map[string]any
 	if s, ok := m.(models.Setup); ok {
 		extra = map[string]any{}
 		models.Apply(extra, s)
 	}
-	return k.Installation.Create(world, handle, password, recoveryKey, extra)
+	return k.Installation.Create(world, handle, password, phrase, extra)
 }
 
 // Models reads the installer's models page through package models: None
@@ -281,7 +286,7 @@ func (c chrome) Fragment(w http.ResponseWriter, status int, name string, data an
 	return c.r.Fragment(w, status, name, data)
 }
 
-func (chrome) NewPhrase() (string, string, error) { return server.NewRecoveryPhrase() }
+func (chrome) NewPhrase() (string, error) { return server.NewRecoveryPhrase() }
 
 // switcher is the listener's handler: the installer first, the application once it
 // is built. One listener, swapped atomically, so the address answers from the
@@ -440,14 +445,17 @@ func run() (code int, next string) {
 		return 1, ""
 	}
 	defer sup.Close()
+	kernelURL, _ := url.Parse(cfg.KernelBaseURL) // validated by LoadConfig
+	inst := &kernel.Installation{Home: cfg.Root, URL: kernelURL, Log: log, Programs: sup, Ctx: ctx}
+	if _, old := inst.Old(); old {
+		cfg.KernelPublicKey = "" // the old kernel's: the new one is asked for its own
+	}
 	w, err := wire(cfg, log)
 	if err != nil {
 		log.Error("startup failed", "err", err)
 		return 1, ""
 	}
 	w.programs = sup
-	kernelURL, _ := url.Parse(cfg.KernelBaseURL) // validated by LoadConfig
-	inst := &kernel.Installation{Home: cfg.Root, URL: kernelURL, Log: log, Programs: sup, Ctx: ctx}
 	defer inst.WaitBoot() // ctx has ended: a first boot in flight is ending
 	in := installer.New(installer.Options{Kernel: installation{inst}, Chrome: chrome{w.renderer},
 		URL: cfg.KernelBaseURL, Listen: cfg.ListenAddr, Home: cfg.Root, Log: log, Run: sup.Run, Assistant: w.assistant})

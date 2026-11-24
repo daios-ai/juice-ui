@@ -44,6 +44,9 @@ type fakeKernel struct {
 	ran        []string      // the programs started (Options.Run): what was installed by then, per call
 	startedAt  []int         // how many times the programs had been started, per Start
 	worlds     []World       // the worlds listed, when set
+	old        *OldKernel    // the kernel this Juice cannot serve, when set
+	retireErr  error
+	retired    int
 }
 
 func (k *fakeKernel) Local() bool { return !k.remote }
@@ -56,6 +59,21 @@ func (k *fakeKernel) Booted() (string, bool, error) {
 	k.mu.Lock()
 	defer k.mu.Unlock()
 	return "play", k.booted, k.bootErr
+}
+func (k *fakeKernel) Old() (OldKernel, bool) {
+	if k.old == nil {
+		return OldKernel{}, false
+	}
+	return *k.old, true
+}
+func (k *fakeKernel) Retire() error {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	if k.retireErr != nil {
+		return k.retireErr
+	}
+	k.retired++
+	return nil
 }
 func (k *fakeKernel) Due(answers bool) []Component {
 	k.mu.Lock()
@@ -89,13 +107,13 @@ func (k *fakeKernel) Worlds() ([]World, error) {
 		{Name: "play", Description: "no real money", Rail: "manual", Symbol: "fUSD"},
 	}, nil
 }
-func (k *fakeKernel) Create(world, handle, password, key string, m any) error {
+func (k *fakeKernel) Create(world, handle, password, phrase string, m any) error {
 	if k.hold != nil {
 		<-k.hold
 	}
 	k.mu.Lock()
 	defer k.mu.Unlock()
-	k.created = append(k.created, strings.Join([]string{world, handle, password, key}, " "))
+	k.created = append(k.created, strings.Join([]string{world, handle, password, phrase}, " "))
 	k.models = append(k.models, m)
 	if k.createErr != nil && !k.makes {
 		return k.createErr
@@ -158,11 +176,11 @@ func (c chrome) Page(w http.ResponseWriter, status int, page, title string, data
 func (c chrome) Fragment(w http.ResponseWriter, status int, name string, data any) error {
 	return c.r.Fragment(w, status, name, data)
 }
-func (c chrome) NewPhrase() (string, string, error) {
+func (c chrome) NewPhrase() (string, error) {
 	if c.broken {
-		return "", "", errors.New("no entropy")
+		return "", errors.New("no entropy")
 	}
-	return c.phrase, "PUBKEY", nil
+	return c.phrase, nil
 }
 
 // TestMain shortens the waits once for the whole package, so no installer a
@@ -282,6 +300,7 @@ func TestTheMachineChoosesTheSteps(t *testing.T) {
 		{&fakeKernel{due: both}, "download,world,kernel,assistant,models,phrase,summary,install,start"},
 		{&fakeKernel{canCreate: errors.New("older")}, "download,world,kernel,assistant,models,phrase,summary,install,start"},
 		{&fakeKernel{bootErr: errors.New("damaged")}, "start"},
+		{&fakeKernel{booted: true, due: both, old: &OldKernel{}}, "old,download,world,kernel,assistant,models,phrase,summary,install,start"},
 		{&fakeKernel{remote: true}, "wait"},
 		{&fakeKernel{answers: true}, "wait"},
 	} {
@@ -357,7 +376,7 @@ func TestALaunchThatCannotBeHeldSaysWhy(t *testing.T) {
 
 // A new machine runs the steps it needs and the launch, with no further page: the
 // rail counts the installer's own steps, Install answers at once and runs one
-// job, the first boot gets the password and the phrase's key, the phrase is shown
+// job, the first boot gets the password and the phrase, the phrase is shown
 // on its page alone and gone when the sequence ends, and the request after
 // Install is sent on to the application.
 func TestANewMachineInstallsThenOpensTheUI(t *testing.T) {
@@ -390,13 +409,13 @@ func TestANewMachineInstallsThenOpensTheUI(t *testing.T) {
 	waitFor(t, in, "models")
 	next(t, h, "models", url.Values{"chat_provider": {"other"}, "chat_url": {"http://127.0.0.1:1/v1"}, "chat_key": {"sk-1"}, "chat_model": {"m1"}})
 	waitFor(t, in, "phrase")
-	if b := page(t, h); !strings.Contains(b, "<li>abandon</li>") || !strings.Contains(b, `name="understand"`) {
+	if b := page(t, h); !strings.Contains(b, "<li>abandon</li>") || !strings.Contains(b, `name="understand"`) || !strings.Contains(b, "identity") || !strings.Contains(b, "controls the kernel's money") {
 		t.Error("the phrase page shows the words")
 	}
 	next(t, h, "phrase", url.Values{"understand": {"on"}})
 	waitFor(t, in, "summary")
 	b = page(t, h)
-	for _, want := range []string{"polygon", "alpha", "/home/x/.juice/kernels/polygon", "Losing that directory loses the money", ">Install</button>",
+	for _, want := range []string{"polygon", "alpha", "/home/x/.juice/kernels/polygon", "The recovery phrase controls the money this kernel holds on the chain.", ">Install</button>",
 		"<dt>Chat model</dt><dd>m1 · http://127.0.0.1:1/v1</dd>", "<dt>Embedding model</dt><dd>None</dd>", "<dt>Assistant</dt><dd class=\"mono\">assistant@alpha</dd>"} {
 		if !strings.Contains(b, want) {
 			t.Errorf("summary lacks %q", want)
@@ -428,7 +447,7 @@ func TestANewMachineInstallsThenOpensTheUI(t *testing.T) {
 	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/" {
 		t.Errorf("after Install the page goes to the application: %d", rec.Code)
 	}
-	if len(k.created) != 1 || k.created[0] != "polygon alpha secret123 PUBKEY" || k.started != 1 {
+	if len(k.created) != 1 || k.created[0] != "polygon alpha secret123 "+phrase || k.started != 1 {
 		t.Errorf("created %v, started %d", k.created, k.started)
 	}
 	if m, _ := k.models[0].(models.Setup); m.Chat.ID != "m1" || m.Chat.Key != "sk-1" {
@@ -439,7 +458,7 @@ func TestANewMachineInstallsThenOpensTheUI(t *testing.T) {
 	}
 	in.mu.Lock()
 	defer in.mu.Unlock()
-	if in.phrase != "" || in.password != "" || in.assistant != "" || in.pub != "" || in.models != nil {
+	if in.phrase != "" || in.password != "" || in.assistant != "" || in.models != nil {
 		t.Error("the secrets leave memory with the sequence")
 	}
 	if strings.Join(k.assistants, ",") != "assist123" {
@@ -635,7 +654,7 @@ func TestAFailedFirstBootReturnsToTheKernelPage(t *testing.T) {
 	next(t, h, "phrase", url.Values{"understand": {"on"}})
 	next(t, h, "summary", nil)
 	waitFor(t, in, "")
-	if len(k.created) != 2 || k.created[1] != "play alpha another12 PUBKEY" || k.started != 1 {
+	if len(k.created) != 2 || k.created[1] != "play alpha another12 "+phrase || k.started != 1 {
 		t.Errorf("created %v, started %d", k.created, k.started)
 	}
 
@@ -782,6 +801,56 @@ func TestOnlyThisMachineInstalls(t *testing.T) {
 	}
 }
 
+// An old kernel is named on a page of its own, before anything is downloaded
+// or moved: what happens to it, the way to keep it, and the one command. The
+// command retires it and goes on as on a new machine, its name offered again;
+// a refusal keeps the page.
+func TestAnOldKernelIsRetiredOnlyWhenAccepted(t *testing.T) {
+	k := &fakeKernel{booted: true, due: []Component{{"juice", "v0.22.1"}}, retireErr: errors.New("a kernel is running in /x"),
+		old: &OldKernel{Handle: "alpha", Version: "0.21.3", Release: "v0.76.3", Chain: true, Kept: "/home/x/.juice/old/0.21.3"}}
+	in, h := start(t, k)
+	waitFor(t, in, "old")
+	b := page(t, h)
+	for _, want := range []string{"alpha", "0.21.3", "A new kernel will be created.", "/home/x/.juice/old/0.21.3", "sh -s -- v0.76.3", "stays at its old address", ">Create a new kernel</button>"} {
+		if !strings.Contains(b, want) {
+			t.Errorf("the page lacks %q", want)
+		}
+	}
+	far := map[string]string{"X-Forwarded-For": "203.0.113.9"}
+	if b := do(t, h, http.MethodGet, "/", nil, far).Body.String(); strings.Contains(b, "Create a new kernel</button>") || strings.Contains(b, "/home/x") || strings.Contains(b, "juice kernel serve") || !strings.Contains(b, "on the machine it runs on") {
+		t.Error("a request from elsewhere is told where to continue")
+	}
+	k.old = &OldKernel{Handle: "alpha", Version: "0.21.3", Chain: true, Kept: k.old.Kept} // half moved: no release to go back to
+	if rec := next(t, h, "old", nil); rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), "a kernel is running in /x") || strings.Contains(rec.Body.String(), "install.sh") {
+		t.Errorf("a refusal keeps the page, as the old kernel now stands: %d", rec.Code)
+	}
+	k.mu.Lock()
+	if len(k.installed) != 0 || k.retired != 0 {
+		t.Error("nothing is touched before the command")
+	}
+	k.retireErr = nil
+	k.mu.Unlock()
+	next(t, h, "old", nil)
+	waitFor(t, in, "world")
+	next(t, h, "world", url.Values{"world": {"play"}})
+	if b := page(t, h); !strings.Contains(b, `value="alpha"`) {
+		t.Error("the old kernel's name is offered again")
+	}
+	if k.retired != 1 {
+		t.Errorf("retired %d", k.retired)
+	}
+}
+
+// With no release recorded there is none to go back to, and off a chain no
+// money is left behind.
+func TestAnOldKernelsPageStatesOnlyWhatIsKnown(t *testing.T) {
+	in, h := start(t, &fakeKernel{booted: true, old: &OldKernel{Version: "0.21.3", Kept: "/k"}})
+	waitFor(t, in, "old")
+	if b := page(t, h); strings.Contains(b, "install.sh") || strings.Contains(b, "old address") {
+		t.Error("no way back and no chain warning")
+	}
+}
+
 // Once the application serves, a page still open is sent to it by its poll.
 func TestBehindSendsAnOpenPageOn(t *testing.T) {
 	in, _ := start(t, &fakeKernel{remote: true, answers: true})
@@ -853,5 +922,16 @@ func TestTheProgramsStartAfterDownload(t *testing.T) {
 	defer far.mu.Unlock()
 	if len(far.ran) != 1 {
 		t.Errorf("waiting for a kernel elsewhere starts the programs once: %q", far.ran)
+	}
+}
+
+// A page of the application left open, as the one an update was started from,
+// polls and swaps nothing: its poll is sent to the installer's page.
+func TestAnOpenPageIsSentToTheInstaller(t *testing.T) {
+	in, h := start(t, &fakeKernel{booted: true, old: &OldKernel{Version: "0.21.3", Kept: "/k"}})
+	waitFor(t, in, "old")
+	rec := do(t, h, http.MethodGet, "/tick", nil, map[string]string{"HX-Request": "true"})
+	if rec.Header().Get("HX-Redirect") != "/" || rec.Body.Len() != 0 {
+		t.Errorf("an open page's poll: %q, %d bytes", rec.Header().Get("HX-Redirect"), rec.Body.Len())
 	}
 }

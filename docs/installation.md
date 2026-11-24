@@ -16,6 +16,7 @@ $JUICE_HOME                       (default ~/.juice; env-overridable, same on ma
 ├── ui/                   config.json, state.json, kernel.log (the first boot's),
 │                         release (the UI release that last served), backup/
 │                         (the kernel homes and binary an update replaced)
+├── old/<version>/        an old kernel the operator replaced, and what was bound to it
 ├── agents/<name>/        one agent's configuration, persona, memory
 ├── services/<name>/      one installed service; services/chat/ is juice-chat's,
                           holding config.json, state.json, rooms.db, serve.lock
@@ -49,7 +50,7 @@ Rules each repo follows:
    namespace): `config.json` (operator, hand-written), `state.json` (machine
    state), `tokens/` — never a component-prefixed name like `juice.json` or
    `juice-ui.json`. Databases are named for their content (`chat.db`).
-6. Migrate keep-old-if-present: never auto-move a key or live DB; log a one-line
+6. Migrate keep-old-if-present: never, unasked, move a key or live DB; log a one-line
    manual move.
 
 Single home (Geth/IPFS/Cargo lineage) over the XDG split: this state is precious,
@@ -90,9 +91,21 @@ avatar leads to Admin, whose **version** row offers **Update**. The update
 downloads the release while Juice serves, checks it as `install.sh` does, puts
 its three programs in `bin/`, and restarts Juice in the same terminal; the
 kernel and the agent then follow the releases the new UI pins, and everyone
-signs in again. Running `install.sh` by hand, with or without a version, ends
+signs in again.
+Running `install.sh` by hand, with or without a version, ends
 the same way at the next start. Only a release run from `$JUICE_HOME/bin`
 updates itself.
+
+**An old kernel.** A kernel made before v0.22.0 cannot be served by a later one.
+When Juice finds one, the installer's first page says so and asks; only its
+command, **Create a new kernel**, changes anything. It moves the old kernel and
+what is bound to it (`kernels/`, `client/`, `agents/`, `services/`, `worlds/`,
+`supervisor/programs/`, `bin/juice`) to `old/<version>/`, deletes nothing, and
+the installer goes on as on a new machine. Nothing overwrites `old/`. A move
+that stopped partway goes on in the same folder, `old/<version>.partial/` until it
+holds everything. To keep the
+old kernel instead, stop Juice and install the release the page names. A UI whose
+`ui/config.json` names its kernel needs the new kernel's name there.
 
 **The backup.** Before a kernel binary replaces another, the UI copies every
 kernel home (`kernels/<world>/` holding `juice.db`), the old `bin/juice` and

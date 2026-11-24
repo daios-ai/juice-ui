@@ -37,17 +37,28 @@ type Component struct{ Name, Release string }
 // World is one network a kernel can serve, as the kernel lists it.
 type World struct{ Name, Description, Rail, Symbol, Error string }
 
+// OldKernel is a kernel this machine holds and Juice can no longer serve:
+// its name, the release that served it, the UI release to go back to, whether it
+// holds money on a chain, and where it is kept once retired.
+type OldKernel struct {
+	Handle, Version, Release string
+	Chain                    bool
+	Kept                     string
+}
+
 // Kernel is this machine's installation as the installer drives it.
 type Kernel interface {
-	Local() bool                                                          // the configured kernel is this machine's
-	Serving(ctx context.Context) bool                                     // a kernel answers at the configured address
-	Booted() (world string, booted bool, err error)                       // the kernel home for that address, and whether a kernel lives in it
-	Due(answers bool) []Component                                         // what to install now
-	Install(ctx context.Context, c Component) error                       // one component, verified
-	CanCreate() error                                                     // the kernel binary can perform a first boot
-	Worlds() ([]World, error)                                             // the networks a new kernel may serve
-	Create(world, handle, password, recoveryKey string, models any) error // the first boot, with the models chosen
-	Start(ctx context.Context) error                                      // the supervisor serves the kernel; returns once it answers
+	Local() bool                                                     // the configured kernel is this machine's
+	Serving(ctx context.Context) bool                                // a kernel answers at the configured address
+	Booted() (world string, booted bool, err error)                  // the kernel home for that address, and whether a kernel lives in it
+	Old() (OldKernel, bool)                                          // the kernel Juice can no longer serve
+	Retire() error                                                   // moves it to where it is kept
+	Due(answers bool) []Component                                    // what to install now
+	Install(ctx context.Context, c Component) error                  // one component, verified
+	CanCreate() error                                                // the kernel binary can perform a first boot
+	Worlds() ([]World, error)                                        // the networks a new kernel may serve
+	Create(world, handle, password, phrase string, models any) error // the first boot, with the models chosen
+	Start(ctx context.Context) error                                 // the supervisor serves the kernel; returns once it answers
 	// Models reads the models page: with form nil, held as it stands, None
 	// when held is nil; with a form, the answers over held, and whether they
 	// may be kept (done) or what to say. The setup is opaque here, held from
@@ -61,7 +72,7 @@ type Kernel interface {
 type Chrome interface {
 	Page(w http.ResponseWriter, status int, page, title string, data any) error
 	Fragment(w http.ResponseWriter, status int, name string, data any) error
-	NewPhrase() (phrase, publicKey string, err error)
+	NewPhrase() (string, error)
 }
 
 // Options configure an installer.
@@ -140,9 +151,9 @@ type Installer struct {
 	handle,
 	password string // held from its page to the first boot, never rendered
 	assistant string // the assistant's password, held from its page to the end, never rendered
-	phrase,
-	pub string
-	models any // the models chosen, with their keys: held from their page to the first boot
+	phrase    string
+	old       OldKernel // the kernel the first page is about, when there is one
+	models    any       // the models chosen, with their keys: held from their page to the first boot
 }
 
 // New builds the installer.
@@ -179,7 +190,8 @@ func (in *Installer) Run(ctx context.Context) {
 	in.enter(0)
 }
 
-// choose is the sequence the facts call for. It is the installer's steps this
+// choose is the sequence the facts call for. A kernel Juice can no longer serve
+// comes first, on a page that asks before it is replaced. It is the installer's steps this
 // machine needs, which may be none, then the launch. Download comes when a
 // component is missing; the pages and Install when a kernel is: the kernel is
 // this machine's, no home exists for its address, and nothing answers there (one
@@ -193,18 +205,25 @@ func (in *Installer) choose(ctx context.Context) ([]Step, error) {
 	}
 	answers := k.Serving(ctx)
 	_, booted, berr := k.Booted()
-	ours := booted || berr != nil
-	creating := !ours && !answers
+	old, isOld := k.Old()
+	ours := (booted || berr != nil) && !isOld
+	creating := isOld || (!ours && !answers)
 	var seq []Step
+	if isOld {
+		// It is retired, if it is, before anything is downloaded; one that
+		// answers is refused there.
+		in.old, in.handle, answers = old, old.Handle, false
+		seq = append(seq, in.oldPage())
+	}
 	if dl, ok := in.download(answers && !ours, creating); ok {
 		seq = append(seq, dl)
 	}
 	if creating {
-		phrase, pub, err := in.o.Chrome.NewPhrase()
+		phrase, err := in.o.Chrome.NewPhrase()
 		if err != nil {
 			return nil, errors.New("couldn't set up account recovery; restart Juice to try again")
 		}
-		in.phrase, in.pub = phrase, pub
+		in.phrase = phrase
 		seq = append(seq, in.worldPage(), in.kernelPage(), in.assistantPage(), in.modelsPage(), in.phrasePage(), in.summaryPage(), in.install())
 	}
 	return append(seq, in.launch(ours || creating)), nil
@@ -223,6 +242,18 @@ func (in *Installer) download(followed, creating bool) (Step, bool) {
 		jobs = append(jobs, Job{Title: "Check the kernel", Run: func(context.Context) error { return k.CanCreate() }})
 	}
 	return Step{ID: "download", Title: "Download", Installer: true, Jobs: func() []Job { return jobs }}, len(jobs) > 0
+}
+
+// oldPage asks before a kernel Juice can no longer serve is retired; the rest of
+// the sequence makes a new one.
+func (in *Installer) oldPage() Step {
+	return Step{ID: "old", Title: "Old kernel", Installer: true, Page: true, Submit: answer(func(url.Values) string {
+		if err := in.o.Kernel.Retire(); err != nil {
+			in.old, _ = in.o.Kernel.Old() // a part of it may have moved
+			return err.Error()
+		}
+		return ""
+	})}
 }
 
 func (in *Installer) worldPage() Step {
@@ -315,10 +346,10 @@ func (in *Installer) install() Step {
 	return Step{ID: "install", Title: "Install", Installer: true, Jobs: func() []Job {
 		return []Job{{Title: "Create the kernel", Return: "kernel", Run: func(context.Context) error {
 			in.mu.Lock()
-			world, handle, pw, pub, models := in.world, in.handle, in.password, in.pub, in.models
+			world, handle, pw, phrase, models := in.world, in.handle, in.password, in.phrase, in.models
 			in.password = ""
 			in.mu.Unlock()
-			return in.o.Kernel.Create(world, handle, pw, pub, models)
+			return in.o.Kernel.Create(world, handle, pw, phrase, models)
 		}}}
 	}}
 }
@@ -365,7 +396,7 @@ func (in *Installer) enter(i int) {
 		if in.assistant != "" && in.o.Assistant != nil {
 			in.o.Assistant(in.assistant)
 		}
-		in.password, in.assistant, in.phrase, in.pub, in.models = "", "", "", "", nil
+		in.password, in.assistant, in.phrase, in.models = "", "", "", nil
 		in.once.Do(func() { close(in.ready) })
 		in.o.Log.Info("installer", "step", "end")
 		return
@@ -525,6 +556,7 @@ type view struct {
 	Chosen, Handle, Home     string
 	Words                    []string
 	Phrase                   string
+	Old                      OldKernel
 	Models                   any // the models page, and the summary's rows
 }
 
@@ -587,6 +619,8 @@ func (in *Installer) view(r *http.Request) view {
 		return v
 	}
 	switch st.ID {
+	case "old":
+		v.Old = in.old
 	case "world", "summary":
 		ws, err := in.o.Kernel.Worlds()
 		if err != nil && v.Error == "" {
@@ -624,7 +658,8 @@ func (in *Installer) view(r *http.Request) view {
 // getStep renders the current step. While the launch runs, a page request is
 // held instead, and answered by the application once it holds the listener; it
 // is answered with what the launch is doing only when a launch job fails or the
-// launch outlasts holdTimeout.
+// launch outlasts holdTimeout. A script's request is an application page's, left
+// open since before this start: it is sent here, since it would swap nothing.
 func (in *Installer) getStep(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet && in.hold(r.Context()) {
 		select {
@@ -634,6 +669,10 @@ func (in *Installer) getStep(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		http.Redirect(w, r, r.URL.RequestURI(), http.StatusSeeOther)
+		return
+	}
+	if r.Header.Get("HX-Request") != "" {
+		w.Header().Set("HX-Redirect", "/")
 		return
 	}
 	in.render(w, r, http.StatusOK)
