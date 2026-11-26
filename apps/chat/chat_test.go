@@ -1421,7 +1421,7 @@ func TestNoMoneyLandsOnTheWallet(t *testing.T) {
 		f.mes["AT"] = `{"address":{"address":"assistant@testnet","principal":"assistant@testnet"},"connectors":[]}`
 		f.broke = map[string]bool{"chat@testnet/" + action: true}
 		rec := landing(c, sm)
-		if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/wallet" || !strings.Contains(rec.Header().Get("X-Flash"), "Not enough balance to open your rooms.") {
+		if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/wallet" || rec.Header().Get("X-Flash") != "error: Not enough balance for this. Add money in Wallet." {
 			t.Fatalf("%s refused for funds: %d %q %q", action, rec.Code, rec.Header().Get("Location"), rec.Header().Get("X-Flash"))
 		}
 		f.mu.Lock()
@@ -1460,7 +1460,7 @@ func TestARoomUnpaidForOpensTheWallet(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/chat/room/"+id, nil)
 	req.SetPathValue("id", id)
 	rec = as(c, sm, c.getRoom, req)
-	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/wallet" || !strings.Contains(rec.Header().Get("X-Flash"), "Not enough balance to open your rooms.") {
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/wallet" || rec.Header().Get("X-Flash") != "error: Not enough balance for this. Add money in Wallet." {
 		t.Errorf("an unpaid room read: %d %q %q", rec.Code, rec.Header().Get("Location"), rec.Header().Get("X-Flash"))
 	}
 }

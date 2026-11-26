@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"html/template"
 	"io"
 	"io/fs"
@@ -980,6 +981,74 @@ func TestConversationsServeTheirAccountsAlone(t *testing.T) {
 		if served != (resp.Header.Get("Location") == "/rooms") || served != strings.Contains(page, "rooms</nav>") ||
 			served != (room == "rooms") || served != strings.Contains(tick, "ticked") {
 			t.Errorf("%s (served %v): landing %q, rail %v, route %q, tick %q", handle, served, resp.Header.Get("Location"), strings.Contains(page, "rooms</nav>"), room, tick)
+		}
+	}
+}
+
+// An account that holds no money, available and parked both zero, is empty,
+// and an empty account's app is its wallet: it lands there, has no rail, and
+// the conversations app's routes and watchers are closed to it. Parked money
+// is held, and an account whose read failed is not called empty. Its wallet's
+// funded watch answers nothing while it is empty and sends the page to the
+// landing once money arrives.
+func TestAnEmptyAccountsAppIsItsWallet(t *testing.T) {
+	var available, locked atomic.Int64
+	var fail atomic.Bool
+	mux := http.NewServeMux()
+	fakeHealth(mux)
+	mux.HandleFunc("POST /v1/auth/authorize", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`{"redirect":"?code=C"}`)) })
+	mux.HandleFunc("POST /v1/auth/token", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"access_token":"at","refresh_token":"rt"}`))
+	})
+	mux.HandleFunc("GET /v1/me", func(w http.ResponseWriter, r *http.Request) {
+		if fail.Load() {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		fmt.Fprintf(w, `{"id":"U1","address":{"address":"alice@testnet","principal":"alice@testnet"},"available":%d,"locked":%d}`, available.Load(), locked.Load())
+	})
+	for _, p := range []string{"GET /v1/withdrawals", "GET /v1/processes", "GET /v1/ledger", "GET /v1/tasks", "GET /v1/actions", "GET /v1/transactions"} {
+		mux.HandleFunc(p, func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
+	}
+	kernel := httptest.NewServer(mux)
+	t.Cleanup(kernel.Close)
+	app := servesApp{deps: &apps.Deps{}}
+	srv := httptest.NewServer(newTestHandler(t, kernel.URL, func(w *testWiring) { w.apps = []apps.App{app} }))
+	t.Cleanup(srv.Close)
+	cl := loginClientAs(t, srv.URL, "alice")
+	for _, tc := range []struct {
+		name            string
+		available, held int64
+		fail, served    bool
+	}{
+		{"empty", 0, 0, false, false},
+		{"funded", 7, 0, false, true},
+		{"parked only", 0, 3, false, true},
+		{"unread", 0, 0, true, true},
+	} {
+		available.Store(tc.available)
+		locked.Store(tc.held)
+		fail.Store(tc.fail)
+		resp, _ := get(t, cl, srv.URL+"/", false)
+		landing := "/wallet"
+		if tc.served {
+			landing = "/rooms"
+		}
+		if got := resp.Header.Get("Location"); got != landing {
+			t.Errorf("%s: lands on %q, want %q", tc.name, got, landing)
+		}
+		if tc.fail {
+			continue
+		}
+		_, page := get(t, cl, srv.URL+"/wallet", false)
+		_, room := get(t, cl, srv.URL+"/rooms", false)
+		_, tick := get(t, cl, srv.URL+"/tick?watch=rooms:x:", true)
+		if tc.served != strings.Contains(page, "rooms</nav>") || tc.served != (room == "rooms") || tc.served != strings.Contains(tick, "ticked") {
+			t.Errorf("%s (served %v): rail %v, route %q, tick %q", tc.name, tc.served, strings.Contains(page, "rooms</nav>"), room, tick)
+		}
+		funded, _ := get(t, cl, srv.URL+"/tick?watch=funded::", true)
+		if moved := funded.Header.Get("HX-Redirect"); (moved == "/") != tc.served {
+			t.Errorf("%s: the funded watch sends the page to %q", tc.name, moved)
 		}
 	}
 }

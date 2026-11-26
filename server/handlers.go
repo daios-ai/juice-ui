@@ -339,9 +339,12 @@ func (s *Server) postSwitch(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
-// landing is where a session begins: the account's conversations
-// (requirements §6.1), else the catalog.
+// landing is where a session begins: an empty account's wallet, else the
+// account's conversations (requirements §6.1), else the catalog.
 func (s *Server) landing(r *http.Request) string {
+	if me, err := s.me(r); err == nil && empty(me) {
+		return "/wallet"
+	}
 	if c := s.conversations(r); c != nil {
 		return c.Landing()
 	}
@@ -2053,6 +2056,9 @@ type walletView struct {
 	Activity  []entryRow
 	Superuser bool
 	OpenForm  string
+	// Empty is an account holding no money (empty): the page says why it needs
+	// some, waits for it, and draws no section it has nothing in.
+	Empty bool
 	// The rail surface. KernelAddress is where this kernel is paid and Token the
 	// contract that money is; both are empty on a world whose money has no
 	// addresses, where the operator records money in and out (kernel §D23).
@@ -2111,7 +2117,7 @@ func (s *Server) renderWallet(w http.ResponseWriter, r *http.Request, form strin
 		if e != nil {
 			return e
 		}
-		view.Available, view.Locked, view.MyAddress = me.Available, me.Locked, me.BlockchainAddress
+		view.Available, view.Locked, view.MyAddress, view.Empty = me.Available, me.Locked, me.BlockchainAddress, empty(me)
 		view.depositForm = depositForm{Back: "/wallet", Account: me.Address.Address}
 		view.MessagePrefix = wallet.Message(id.PublicKey, me.ID, "")
 		if a := strings.TrimSpace(r.URL.Query().Get("address")); a != "" && form == "address" {

@@ -1,7 +1,20 @@
 # Juice Web UI Requirements
 
-Version: 0.77.0
+Version: 0.77.1
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.77.1.** An account that holds no money, available and
+> parked both zero, is empty, and an empty account's app is its wallet: it
+> lands there, no conversations app serves it, so its sidebar has no rooms and
+> no New room, and the wallet says, above the way in, "This account holds no
+> money. Conversations and other actions are paid from this balance. Add some
+> to start." When money arrives the page moves on to the landing by itself.
+> A new person met a banner about a chat they had not yet seen; chat is no
+> longer attempted for them. An account holding too little for chat is still
+> sent to the wallet, with the sentence every refusal for funds carries, "Not
+> enough balance for this. Add money in Wallet." On a world without addresses
+> the wallet shows the viewer's account, with its copy, as what to give the
+> operator to add money, to anyone but the superuser, who records it.
 
 > **What changed in 0.77.0.** The kernel pin is v0.22.1, whose kernel has one
 > key, derived from its recovery phrase: the first boot passes the phrase
@@ -1950,10 +1963,14 @@ and absent until then.
   overlay on a wide screen.
 * **Sign-in lands in a conversation** (§6.7): the conversations app's landing,
   or Discover where no conversations app serves the account in use. The root address (`/`)
-  renders no page: it MUST redirect a session to that landing. A session that
-  cannot pay to open its conversations lands on the **wallet** instead, the
-  reason as the one-shot banner, as wallet apps open an empty account on
-  funding it; only the landing does this, so every other page stays reachable. An action page
+  renders no page: it MUST redirect a session to that landing. **An account
+  that holds no money, available and parked both zero, is empty, and an empty
+  account's app is its wallet**: it lands on the **wallet** (§6.5), as wallet
+  apps open an empty account on funding it, and no conversations app serves
+  it, so its sidebar has no rooms and no New room and the app's addresses send
+  it to the root; the avatar menu keeps every other page reachable. The rule
+  reads the account alone: no price, no attempt at chat, and an account whose
+  read failed is not called empty. An action page
   belongs to no destination: it is reached from the launcher, Discover or a
   row.
 * The account summary (address, available balance) heads the avatar menu.
@@ -2807,8 +2824,16 @@ open (parked tasks), the result MUST say so and link to the Wallet.
     **Record a payment**, Admin's deposit dialog with their own account filled
     in and the wallet its way back. **Withdraw** is offered only with a balance
     (a doomed act is never offered), so at zero the way in is the one command.
-    Anyone else on a world without addresses reads that the operator records
-    money in and out.
+    On a world without addresses the card reads that the operator records
+    money in and out, and anyone but the superuser reads that, to add money,
+    one gives them one's account, shown under **Your account** with its copy.
+  * **An empty account** (§6.1) reads, under the figures and above the
+    commands, one plain paragraph: "This account holds no money.
+    Conversations and other actions are paid from this balance. Add some to
+    start." — one wording for a new account and one that ran out. Its
+    **Open sessions** and **Recent activity** are drawn only when they hold
+    rows, and the page holds the `funded` watch, which sends it to the root
+    once the account holds money, as payment pages move on when paid.
   * **Register:** the wallet signs, EIP-191, the kernel's registration message —
     `juice address registration`, `kernel: <public key>`, `user: <account id>`,
     `address: <address>`, four lines, no trailing newline — with the address
@@ -3721,9 +3746,10 @@ The rules:
    landing reads this kernel's chat afresh, as a room's page reads its chat,
    so a read that failed before is replaced at once, never waited out. A
    refusal for funds on the way in — joining chat, listing rooms, making the
-   first room, opening a room — sends the viewer to the wallet with "Not
-   enough balance to open your rooms." (§6.1), told by the error's kind,
-   never its words. A
+   first room, opening a room — sends the viewer, who holds some money but
+   too little, to the wallet with the sentence every refusal for funds
+   carries, "Not enough balance for this. Add money in Wallet.", told by the
+   error's kind, never its words; an empty account never gets here (§6.1). A
    room named `assistant` by an earlier release keeps its name. The rail
    lists the viewer's rooms. Every room read and command on a page is a run of its
    action as the viewer, so the UI touches no store of chat's, and New room

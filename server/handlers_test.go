@@ -916,6 +916,9 @@ func TestWalletPayInAndWithdrawalFollowTheWorld(t *testing.T) {
 	if !strings.Contains(body, "the operator records money in and out") {
 		t.Error("without addresses, the wallet must say who records a payment")
 	}
+	if !strings.Contains(body, "To add money, give them your account.") || !strings.Contains(body, `data-copy="alice@testnet"`) {
+		t.Error("without addresses, the wallet must show the account to hand the operator, with its copy")
+	}
 	if !strings.Contains(body, "form=withdraw") {
 		t.Error("every world pays out, so a withdrawal is offered")
 	}
@@ -1914,7 +1917,7 @@ func TestWorkshopOrdersInactiveThenRuns(t *testing.T) {
 		w.Write([]byte(`{"access_token":"at","refresh_token":"rt"}`))
 	})
 	mux.HandleFunc("GET /v1/me", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"id":"U1","address":{"address":"alice@testnet","principal":"alice@testnet"},"available":0,"locked":0}`))
+		w.Write([]byte(`{"id":"U1","address":{"address":"alice@testnet","principal":"alice@testnet"},"available":500,"locked":0}`))
 	})
 	mux.HandleFunc("GET /v1/actions", func(w http.ResponseWriter, r *http.Request) {
 		if pastEnd(w, r) {
@@ -4864,7 +4867,8 @@ func TestResultDownloadIsAnAttachment(t *testing.T) {
 }
 
 // TestPageReadsTheViewerOnce: a page reads /v1/me once, however many of its
-// parts need the viewer (the envelope's balance, the handler's address).
+// parts need the viewer (the envelope's balance, the handler's address); the
+// root, which only sends the browser on, reads it once to choose where.
 func TestPageReadsTheViewerOnce(t *testing.T) {
 	kernel := authKernel()
 	defer kernel.Close()
@@ -4881,7 +4885,7 @@ func TestPageReadsTheViewerOnce(t *testing.T) {
 	cl := loginClient(t, srv.URL)
 	for _, page := range []string{"/", "/wallet", "/inbox", "/settings", "/workshop", "/transactions"} {
 		reads.Store(0)
-		getBody(t, cl, srv.URL+page)
+		get(t, cl, srv.URL+page, false)
 		if n := reads.Load(); n != 1 {
 			t.Errorf("%s read /v1/me %d times, want 1", page, n)
 		}
@@ -5225,20 +5229,23 @@ func TestAnUnaskedSearchIsPinned(t *testing.T) {
 // explained card below holds none. Withdraw needs a balance. On a world
 // without addresses the superuser records a payment from here, the dialog
 // open without script, its account their own and its way back the wallet;
-// nobody else is offered it.
+// nobody else is offered it, and everyone else reads that they give the
+// operator their account, shown with its copy.
 func TestWalletLeadsWithTheWayMoneyComesIn(t *testing.T) {
 	type world struct{ addressed, connected, superuser bool }
 	for _, tc := range []struct {
 		name      string
 		w         world
 		available int64
+		locked    int64
 		want, not []string
 	}{
-		{"play, a person, empty", world{}, 0, nil, []string{"form=withdraw", "Record a payment", "Connect crypto wallet"}},
-		{"play, a person, funded", world{}, 7, []string{"form=withdraw"}, []string{"Record a payment"}},
-		{"play, the superuser, empty", world{superuser: true}, 0, []string{"Record a payment"}, []string{"form=withdraw"}},
-		{"chain, not connected", world{addressed: true}, 0, []string{"Connect crypto wallet"}, []string{"form=withdraw", "Change address", "Record a payment"}},
-		{"chain, connected, funded", world{addressed: true, connected: true}, 7, []string{"form=withdraw", "Change address"}, []string{"Connect crypto wallet", "Record a payment"}},
+		{"play, a person, empty", world{}, 0, 0, nil, []string{"form=withdraw", "Record a payment", "Connect crypto wallet"}},
+		{"play, a person, funded", world{}, 7, 0, []string{"form=withdraw"}, []string{"Record a payment"}},
+		{"play, a person, parked", world{}, 0, 3, nil, []string{"form=withdraw", "Record a payment"}},
+		{"play, the superuser, empty", world{superuser: true}, 0, 0, []string{"Record a payment"}, []string{"form=withdraw"}},
+		{"chain, not connected", world{addressed: true}, 0, 0, []string{"Connect crypto wallet"}, []string{"form=withdraw", "Change address", "Record a payment"}},
+		{"chain, connected, funded", world{addressed: true, connected: true}, 7, 0, []string{"form=withdraw", "Change address"}, []string{"Connect crypto wallet", "Record a payment"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			handle := "alice"
@@ -5260,7 +5267,7 @@ func TestWalletLeadsWithTheWayMoneyComesIn(t *testing.T) {
 				addr = "0xALICE"
 			}
 			mux.HandleFunc("GET /v1/me", func(w http.ResponseWriter, r *http.Request) {
-				fmt.Fprintf(w, `{"id":"U1","address":{"address":"%s@testnet","principal":"%s@testnet"},"available":%d,"locked":0,"blockchain_address":"%s"}`, handle, handle, tc.available, addr)
+				fmt.Fprintf(w, `{"id":"U1","address":{"address":"%s@testnet","principal":"%s@testnet"},"available":%d,"locked":%d,"blockchain_address":"%s"}`, handle, handle, tc.available, tc.locked, addr)
 			})
 			for _, p := range []string{"GET /v1/withdrawals", "GET /v1/processes", "GET /v1/ledger", "GET /v1/tasks", "GET /v1/actions", "GET /v1/transactions"} {
 				mux.HandleFunc(p, func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
@@ -5276,6 +5283,12 @@ func TestWalletLeadsWithTheWayMoneyComesIn(t *testing.T) {
 				t.Fatal("no deposits block")
 			}
 			card, _, _ = strings.Cut(card, "<h2>")
+			// Without addresses, who adds money is the operator: everyone else
+			// reads that they give them their account, shown with its copy.
+			mine := `data-copy="` + handle + `@testnet"`
+			if give := !tc.w.addressed && !tc.w.superuser; give != (strings.Contains(card, "give them your account") && strings.Contains(card, mine)) {
+				t.Errorf("the card shows the account to give the operator: want %v", give)
+			}
 			for _, w := range tc.want {
 				if !strings.Contains(head, w) {
 					t.Errorf("the commands under the balance lack %q", w)
@@ -5288,6 +5301,18 @@ func TestWalletLeadsWithTheWayMoneyComesIn(t *testing.T) {
 			}
 			if regexp.MustCompile(`class="btn(-primary|-money|-danger)?"`).MatchString(card) {
 				t.Error("the explained card holds no command")
+			}
+			// An account holding no money reads why it needs some above the
+			// way in, its page waits for the money, and the sections it has
+			// nothing in are not drawn; a funded or parked account reads none
+			// of this and keeps its sections.
+			empty := tc.available+tc.locked == 0
+			const why = `<p>This account holds no money. Conversations and other actions are paid from this balance. Add some to start.</p>`
+			if empty != strings.Contains(head, why) || empty != strings.Contains(body, `name="watch" value="funded::"`) {
+				t.Errorf("empty %v: statement %v, funded watch %v", empty, strings.Contains(head, why), strings.Contains(body, `value="funded::"`))
+			}
+			if drawn := strings.Contains(body, "<h2>Open sessions</h2>") || strings.Contains(body, "<h2>Recent activity</h2>"); drawn == empty {
+				t.Errorf("empty %v: the sessions and activity sections drawn %v", empty, drawn)
 			}
 			open := getBody(t, cl, srv.URL+"/wallet?form=admin-deposit")
 			opened := strings.Contains(open, `<dialog id="form-admin-deposit" class="modal-form" open`)

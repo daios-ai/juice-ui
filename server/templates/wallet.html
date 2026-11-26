@@ -17,6 +17,12 @@
 
 {{template "_figures" (figures (figure $d.Available "available" "") (lockedFigure $d.Locked $d.Superuser))}}
 
+{{/* An account holding no money opens here (requirements §6.1): one plain
+     paragraph says why it needs some, above the way in, and the funded watch
+     sends the page on once money arrives. */}}
+{{if $d.Empty}}<p>This account holds no money. Conversations and other actions are paid from this balance. Add some to start.</p>
+<input type="hidden" name="watch" value="funded::">{{end}}
+
 {{/* The money acts stand under the balance, as in every wallet app: the way
      money comes in first — connecting a crypto wallet, then Deposit, or, where
      money has no addresses, the superuser's Record a payment — and Withdraw
@@ -48,12 +54,15 @@
     {{if $d.Token}}<dt>Token</dt><dd>{{$d.Symbol}} · {{template "_addr" (copyOf "token" $d.Token)}}</dd>{{end}}
   </dl>
 {{else}}
-  <p class="help">On {{.KernelNet}}, the operator records money in and out.</p>
+  <p class="help">On {{.KernelNet}}, the operator records money in and out.{{if not $d.CanRecord}} To add money, give them your account.{{end}}</p>
+  {{if not $d.CanRecord}}<dl class="kv">
+    <dt>Your account</dt><dd><span class="mono">{{$d.Account}}</span> {{template "_copy" (copyOf "account" $d.Account)}}</dd>
+  </dl>{{end}}
 {{end}}
 </div>
 
-<div class="subhead"><h2>Open sessions</h2><a class="tabs-action muted small" href="/processes">all sessions →</a></div>
-{{template "_open_sessions" .}}
+{{if or (not $d.Empty) $d.Open}}<div class="subhead"><h2>Open sessions</h2><a class="tabs-action muted small" href="/processes">all sessions →</a></div>
+{{template "_open_sessions" .}}{{end}}
 
 {{if $d.Withdrawals}}
 <h2>Withdrawals</h2>
@@ -76,8 +85,8 @@
 {{template "_pager" $d.Pager}}
 {{end}}
 
-<div class="subhead"><h2>Recent activity</h2><a class="tabs-action muted small" href="/transactions">all transactions →</a></div>
-{{template "_activity" $d.Activity}}
+{{if or (not $d.Empty) $d.Activity}}<div class="subhead"><h2>Recent activity</h2><a class="tabs-action muted small" href="/transactions">all transactions →</a></div>
+{{template "_activity" $d.Activity}}{{end}}
 
 {{if and $d.Chain $d.MyAddress}}
 <dialog id="form-fund" class="modal-form"{{if eq $d.OpenForm "fund"}} open{{end}} aria-label="Deposit">

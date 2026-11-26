@@ -1770,13 +1770,15 @@ func (c *Chat) getLanding(w http.ResponseWriter, r *http.Request) {
 // toWallet sends the viewer to the wallet when chat refused them for funds on
 // the way into their rooms — the landing's join, list and first room, and a
 // room's read — since none opens without money and the wallet says how it
-// comes in.
+// comes in. An account holding no money never gets here (the core does not
+// serve it chat); this is one holding too little, told the one sentence every
+// refusal for funds carries.
 func (c *Chat) toWallet(w http.ResponseWriter, r *http.Request, err error) bool {
 	ke, ok := client.AsKernelError(err)
 	if !ok || ke.Kind != client.KindInsufficientFunds {
 		return false
 	}
-	c.deps.FlashRedirect(w, r, "/wallet", "error", "Not enough balance to open your rooms.")
+	c.deps.FlashRedirect(w, r, "/wallet", "error", ke.UserMessage())
 	return true
 }
 

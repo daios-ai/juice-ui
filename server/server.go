@@ -309,6 +309,7 @@ func New(o Options) (http.Handler, error) {
 	}
 	s.watch("inbox", s.watchInbox)
 	s.watch("balance", s.watchBalance)
+	s.watch("funded", s.watchFunded)
 	s.watch("process", s.watchProcess)
 	s.watch("peer", s.watchPeer)
 	s.watch("session", s.watchSession)
@@ -453,7 +454,7 @@ func New(o Options) (http.Handler, error) {
 		d := deps
 		if c, ok := f.(apps.Conversations); ok {
 			s.conv = c
-			d = s.conversationDeps(deps, c)
+			d = s.conversationDeps(deps)
 		}
 		f.Mount(mux, d) // Mount first: a module stashes Deps here, then uses it in Start.
 		if err := f.Start(context.Background()); err != nil {
@@ -685,23 +686,32 @@ func (s *Server) csrfField(r *http.Request) template.HTML {
 		template.HTMLEscapeString(s.sessions.Address(r.Context()))+`">`)
 }
 
+// empty reports an account that holds no money, available or parked: nothing
+// in Juice that costs can run for it, so its app is its wallet (requirements
+// §6.1).
+func empty(u client.User) bool { return u.Available+u.Locked == 0 }
+
 // conversations is the conversations app when it serves the request's
-// account (apps.Conversations.Serves), nil otherwise: the one place the core
-// asks whom it serves.
+// account (apps.Conversations.Serves) and the account is not empty, nil
+// otherwise: the one place the core asks whom it serves. An account whose
+// read failed is not called empty.
 func (s *Server) conversations(r *http.Request) apps.Conversations {
-	if s.conv != nil && s.conv.Serves(r) {
-		return s.conv
+	if s.conv == nil || !s.conv.Serves(r) {
+		return nil
 	}
-	return nil
+	if me, err := s.me(r); err == nil && empty(me) {
+		return nil
+	}
+	return s.conv
 }
 
 // conversationDeps are the conversations app's dependencies, its routes and
 // watchers closed to an account it does not serve: a route sends the browser
 // to the landing, a watcher answers nothing.
-func (s *Server) conversationDeps(d apps.Deps, c apps.Conversations) apps.Deps {
+func (s *Server) conversationDeps(d apps.Deps) apps.Deps {
 	d.RequireAuth = func(h http.HandlerFunc) http.HandlerFunc {
 		return s.requireAuth(func(w http.ResponseWriter, r *http.Request) {
-			if !c.Serves(r) {
+			if s.conversations(r) == nil {
 				hxRedirect(w, r, "/")
 				return
 			}
@@ -710,7 +720,7 @@ func (s *Server) conversationDeps(d apps.Deps, c apps.Conversations) apps.Deps {
 	}
 	d.Watch = func(kind string, fn apps.Watcher) {
 		s.watch(kind, func(r *http.Request, key, shown string) (template.HTML, error) {
-			if !c.Serves(r) {
+			if s.conversations(r) == nil {
 				return "", nil
 			}
 			return fn(r, key, shown)

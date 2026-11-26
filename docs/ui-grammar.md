@@ -201,7 +201,12 @@ observe is explained where it moves, in a person's words. The wallet's
 crypto wallet, never from an exchange or any other wallet. …" — then your
 crypto address, the Juice deposit address and the token, since a
 payment from an exchange is held for the operator and nothing else on screen
-would show why. No other surface carries explanation. The card holds no
+would show why. On a world without addresses the card says the operator
+records money in and out, and shows anyone but the superuser **Your account**
+with its copy, the one thing to give them. An account that holds no money
+reads, above the way in, why it needs some: "This account holds no money.
+Conversations and other actions are paid from this balance. Add some to
+start." No other surface carries explanation. The card holds no
 command: the wallet's commands stand under its balance, the way money comes in
 first, as in wallet apps, and Withdraw only with a balance, so at zero the way
 in is the one button.

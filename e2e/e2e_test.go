@@ -122,7 +122,8 @@ func TestStories(t *testing.T) {
 	step(t, "the operator lands on the wallet and records a payment there", func(t *testing.T) {
 		signIn(t, sys, "sys")
 		waitURL(t, sys, "/wallet")
-		waitText(t, sys, "Not enough balance to open your rooms.")
+		waitText(t, sys, "This account holds no money. Conversations and other actions are paid from this balance. Add some to start.")
+		wait(t, sys, nothingOfChat)
 		click(t, sys, `a[data-modal="form-admin-deposit"]`)
 		wait(t, sys, `document.querySelector("#dep-address").value === "sys@alpha"`)
 		fill(t, sys, "#dep-ref", "e2e-sys@alpha")
@@ -137,10 +138,11 @@ func TestStories(t *testing.T) {
 		signUp(t, ann, "ann")
 		signIn(t, ann, "ann")
 		waitURL(t, ann, "/wallet")
-		waitText(t, ann, "Not enough balance to open your rooms.")
-		waitText(t, ann, "the operator records money in and out")
+		waitText(t, ann, "This account holds no money. Conversations and other actions are paid from this balance. Add some to start.")
+		wait(t, ann, nothingOfChat)
+		waitText(t, ann, "the operator records money in and out. To add money, give them your account.")
+		waitText(t, ann, "ann@alpha")
 		deposit(t, sys, "ann@alpha", "100")
-		visit(t, ann, "/chat")
 		waitURL(t, ann, "/chat/room/")
 		room = path(t, ann)
 		wait(t, ann, `document.body.textContent.includes("assistant@alpha")`)
@@ -269,7 +271,7 @@ func TestStories(t *testing.T) {
 		wait(t, sys, `document.querySelector('#signin').open && document.querySelector('#signin').innerText.includes("Invalid handle or password.") && document.querySelector('#signin [name=handle]').value === "helper"`)
 		wait(t, sys, `location.pathname === "/agents" && !!document.querySelector('#agent-state-helper')`)
 		submit(t, sys, `#signin form`, map[string]string{"password": password})
-		waitURL(t, sys, "/browse")
+		waitURL(t, sys, "/wallet") // the agent holds no money
 		wait(t, sys, `document.querySelector('meta[name=account]').content === "helper@alpha" && !document.querySelector('.rail') && !document.querySelector('a[href="/agents"]')`)
 		visit(t, sys, "/inbox")
 		waitText(t, sys, "ann@alpha")
@@ -305,7 +307,7 @@ func TestStories(t *testing.T) {
 		submit(t, sys, `form[action="/switch"]:has(input[value="helper@alpha"])`, nil)
 		wait(t, sys, `document.querySelector('meta[name=account]')?.content === "helper@alpha"`)
 		run(t, other, "front", page.BringToFront())
-		waitFor(t, other, `document.querySelector('meta[name=account]')?.content === "helper@alpha" && location.pathname === "/browse"`, 30*time.Second)
+		waitFor(t, other, `document.querySelector('meta[name=account]')?.content === "helper@alpha" && location.pathname === "/wallet"`, 30*time.Second)
 		run(t, sys, "front", page.BringToFront())
 		visit(t, sys, "/wallet")
 		submit(t, sys, `form[action="/switch"]:has(input[value="sys@alpha"])`, nil)
@@ -555,6 +557,10 @@ func waitFor(t *testing.T, ctx context.Context, expr string, d time.Duration) {
 	_ = chromedp.Run(ctx, chromedp.Evaluate(`location.pathname + "\n" + document.body.innerText`, &body))
 	t.Fatalf("waiting for %s\npage: %s", expr, tail(body, 40))
 }
+
+// nothingOfChat holds on a page drawn for an account holding no money: no
+// banner and nothing of chat, its rail and New room included.
+const nothingOfChat = `!document.querySelector(".banner:not([hidden]), .rail") && !document.body.innerText.includes("New room")`
 
 func waitURL(t *testing.T, ctx context.Context, prefix string) {
 	t.Helper()

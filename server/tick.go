@@ -178,6 +178,15 @@ func (s *Server) watchBalance(r *http.Request, _, shown string) (template.HTML, 
 	return s.render.HTML("_balance", balanceView{Amount: me.Available, OOB: true})
 }
 
+// watchFunded sends an empty account's wallet to where a session begins once
+// the account holds money; while it holds none, nothing is sent.
+func (s *Server) watchFunded(r *http.Request, _, _ string) (template.HTML, error) {
+	if me, err := s.me(r); err != nil || empty(me) {
+		return "", nil
+	}
+	return "", apps.Moved("/")
+}
+
 // watchProcess ends the awaiting-receipt banner once the remote receipt has
 // settled; while it is awaited the banner stands and nothing is sent.
 func (s *Server) watchProcess(r *http.Request, id, _ string) (template.HTML, error) {
