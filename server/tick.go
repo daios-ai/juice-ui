@@ -256,7 +256,7 @@ func (s *Server) inspectView(ctx context.Context, key, openForm string) (adminIn
 		}
 		taken := map[string]bool{}
 		for _, p := range peers {
-			if p.PublicKey == key {
+			if p.BlockchainAddress == key {
 				view.Catalog, view.Traded = p.Actions, p.Traded
 			} else if p.Petname != "" {
 				taken[p.Petname] = true

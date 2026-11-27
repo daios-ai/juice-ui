@@ -77,7 +77,7 @@ const (
 )
 
 // kernelRow is one kernel on the network list. Kernel is the party its title
-// names (kernelParty): a peer by its petname, else ~nickname, else its key, and
+// names (kernelParty): a peer by its petname, else ~nickname, else its address, and
 // this kernel by its own handle — never stored as a petname, which is a name
 // bound here for another kernel, nor as a nickname, which is a peer's
 // unverified claim. This kernel's row states no catalog and no contact,
@@ -89,8 +89,8 @@ type kernelRow struct {
 }
 
 // kernelParty is a kernel as a party, so _name draws it as it draws every
-// address: its address the petname bound here, else its key; its principal the
-// key; its nickname the claim a label marks ~ (template helper).
+// address: its address the petname bound here, else its blockchain address;
+// its principal that address; its nickname the claim a label marks ~ (template helper).
 func kernelParty(petname, nickname, key string) client.Party {
 	address := petname
 	if address == "" {
@@ -126,8 +126,8 @@ func poolEvidence(rows []client.Evidence) Report {
 
 // petnameSuggestion is the name the rename form opens with: the petname when
 // one is bound (a rename), else the kernel's own auto-bind preference (kernel
-// §D15) — the cached nickname when it is not key-shaped and free, else
-// k-<key8>, either suffixed 2, 3, … to the lowest free number. taken reports a
+// §D15) — the cached nickname when it is not an address and free, else
+// k- and the address's first eight hex digits, either suffixed 2, 3, … to the lowest free number. taken reports a
 // name bound to another kernel or held by this one. The kernel remains the
 // validator.
 func petnameSuggestion(petname, nickname, key string, taken func(string) bool) string {
@@ -135,8 +135,9 @@ func petnameSuggestion(petname, nickname, key string, taken func(string) bool) s
 		return petname
 	}
 	base := nickname
-	if base == "" || client.IsKey(base) {
-		base = "k-" + key[:min(8, len(key))]
+	if base == "" || client.IsChainAddress(base) {
+		hex := strings.TrimPrefix(key, "0x")
+		base = "k-" + hex[:min(8, len(hex))]
 	}
 	if !taken(base) {
 		return base
@@ -256,7 +257,7 @@ func (s *Server) renameUser(w http.ResponseWriter, r *http.Request, address stri
 	s.flashRedirect(w, r, "/admin", "success", address+" is now "+newName+".")
 }
 
-// postAdminPeerRename binds a kernel's petname, keyed on the public key — an
+// postAdminPeerRename binds a kernel's petname, keyed on the address — an
 // unbound kernel has no name to key on, and advertised names collide across
 // kernels (§6.6). The redirect returns to the key, which is the address the
 // page keeps whatever it is called.
@@ -319,7 +320,7 @@ func (s *Server) postAdminDeposit(w http.ResponseWriter, r *http.Request) {
 }
 
 // getAdminPeers renders the merged roster. The kernel returns counterparties and
-// discovered kernels in one list keyed by public key, so the tab partitions it
+// discovered kernels in one list keyed by address, so the tab partitions it
 // here and the page is sliced locally — the kernel pages before this split, so
 // asking it for one page of one class would drop rows.
 //
@@ -376,14 +377,14 @@ func (s *Server) getAdminPeers(w http.ResponseWriter, r *http.Request) {
 // network, each class in the kernel's own order (§6.6).
 func kernelRows(id client.Identity, peers []client.Peer) []kernelRow {
 	rows := []kernelRow{{
-		Peer:   client.Peer{PublicKey: id.PublicKey},
+		Peer:   client.Peer{BlockchainAddress: id.BlockchainAddress},
 		Class:  classCurrent,
-		Kernel: kernelParty(id.Handle, "", id.PublicKey),
+		Kernel: kernelParty(id.Handle, "", id.BlockchainAddress),
 	}}
 	for _, class := range []string{classParty, classKnown} {
 		for _, p := range peers {
 			if p.Traded == (class == classParty) {
-				rows = append(rows, kernelRow{Peer: p, Class: class, Kernel: kernelParty(p.Petname, p.Nickname, p.PublicKey)})
+				rows = append(rows, kernelRow{Peer: p, Class: class, Kernel: kernelParty(p.Petname, p.Nickname, p.BlockchainAddress)})
 			}
 		}
 	}
@@ -405,7 +406,7 @@ func (s *Server) getAdminInspect(w http.ResponseWriter, r *http.Request) {
 	s.renderPage(w, r, http.StatusOK, "admin_inspect", "Inspect", view)
 }
 
-// getAdminInspectByKey turns a typed public key into the canonical inspect URL.
+// getAdminInspectByKey turns a typed address into the canonical inspect URL.
 // Inspecting is a pure read, so this stays a GET: the form names the key, and
 // the redirect gives the page one address to bookmark and poll. It is the
 // successor entry to the retired subscribe opener — a key learned anywhere (a
@@ -413,19 +414,19 @@ func (s *Server) getAdminInspect(w http.ResponseWriter, r *http.Request) {
 func (s *Server) getAdminInspectByKey(w http.ResponseWriter, r *http.Request) {
 	key := strings.TrimSpace(r.URL.Query().Get("key"))
 	if key == "" {
-		s.flashRedirect(w, r, "/admin/peers", "error", "A kernel public key is required.")
+		s.flashRedirect(w, r, "/admin/peers", "error", "A kernel address is required.")
 		return
 	}
 	http.Redirect(w, r, "/admin/peers/"+url.PathEscape(key), http.StatusSeeOther)
 }
 
-// postAdminPeerSuspend freezes or unfreezes a peer by key. The path's last
+// postAdminPeerSuspend freezes or unfreezes a peer by address. The path's last
 // segment selects the verb (suspend/unsuspend), mirroring postAdminUserOp.
 func (s *Server) postAdminPeerSuspend(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	key := strings.TrimSpace(r.FormValue("key"))
 	if key == "" {
-		s.flashRedirect(w, r, "/admin/peers", "error", "A peer public key is required.")
+		s.flashRedirect(w, r, "/admin/peers", "error", "A peer address is required.")
 		return
 	}
 	unsuspend := strings.HasSuffix(r.URL.Path, "/unsuspend")

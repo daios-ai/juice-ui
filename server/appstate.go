@@ -11,7 +11,7 @@ import (
 
 // appStore persists per-app configuration in a single JSON file (state.json),
 // keyed by the KERNEL the state was provisioned on, then by app slug:
-// {"kernels":{"<public_key>":{"apps":{"<slug>":<blob>}}}}. Anything durable is
+// {"kernels":{"<address>":{"apps":{"<slug>":<blob>}}}}. Anything durable is
 // keyed by the kernel's identity, never by a name or an address
 // (ecosystem-standard §4): a service-account password minted on one kernel must
 // not be replayed on another, and the same UI pointed at a second kernel starts
@@ -24,7 +24,7 @@ type appStore struct {
 	mu   sync.Mutex
 	path string
 	key  string                                // the kernel this store serves
-	all  map[string]map[string]json.RawMessage // kernel key → slug → blob
+	all  map[string]map[string]json.RawMessage // kernel address → slug → blob
 	// Adopted reports that a state.json written before kernel keying was found
 	// and its apps were taken over by the current kernel — the one guess made,
 	// once, because such a file was always provisioned on the kernel the UI was
@@ -128,7 +128,7 @@ func (a *appStore) save(slug string, v json.RawMessage) error {
 
 // viewers keeps, per viewer principal, what this UI holds beside the kernel's
 // records (requirements §6.7): the requesters the viewer ignored, and the
-// disconnects a kernel did not answer, each by its selector spelled by key. It
+// disconnects a kernel did not answer, each by its selector spelled by address. It
 // lives in state.json under the reserved slug "viewers", with this kernel's
 // other state. Each viewer also has one lock: sending a disconnect again and
 // connecting take it, so a disconnect sent again never follows a connection
@@ -144,7 +144,7 @@ type viewers struct {
 // viewerRecord is one viewer's part of viewers.
 type viewerRecord struct {
 	Ignored map[string]bool `json:"ignored,omitempty"` // requester principals
-	Unsent  map[string]bool `json:"unsent,omitempty"`  // grant selectors, by key
+	Unsent  map[string]bool `json:"unsent,omitempty"`  // grant selectors, by address
 }
 
 const viewersSlug = "viewers"

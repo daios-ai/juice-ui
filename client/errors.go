@@ -136,15 +136,15 @@ func (e *KernelError) IsRefreshable() bool {
 
 // Peer names the remote kernel a federation error is about, exactly as the
 // kernel sent it. Every failure to reach a peer carries it as of kernel
-// v0.12.24 — a petname where the failing path knows one, the public key
+// v0.12.24 — a petname where the failing path knows one, the address
 // otherwise (both name a kernel, kernel §D15). PeerDisplay renders it.
 func (e *KernelError) Peer() string { return e.MetaString("peer") }
 
 // PeerDisplay is the peer name as prose. Which name the kernel had to hand
-// varies by failing path, so this abbreviates a KEY and leaves a petname whole:
-// a petname is already what a person recognises the kernel by, however long it
-// is, while 43 characters of base64url in a sentence are unreadable.
-func (e *KernelError) PeerDisplay() string { return ShortKey(e.Peer()) }
+// varies by failing path, so this abbreviates an ADDRESS and leaves a petname
+// whole: a petname is already what a person recognises the kernel by, however
+// long it is, while 42 hex characters in a sentence are unreadable.
+func (e *KernelError) PeerDisplay() string { return ShortChainAddress(e.Peer()) }
 
 func (e *KernelError) Error() string {
 	return fmt.Sprintf("kernel error kind=%s status=%d msg=%q", e.Kind, e.Status, e.KernelMessage)

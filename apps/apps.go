@@ -241,14 +241,15 @@ type Deps struct {
 	// is unknown; the kernel refuses that, so an app retries rather than guesses.
 	Address func(handle string) string
 
-	// KeyAddress is Address with this kernel named by its public key,
-	// handle@<key>, the spelling of an address no petname changes, by which an
-	// app identifies an action's owner on any kernel. "" while the key is unknown.
+	// KeyAddress is Address with this kernel named by its blockchain address,
+	// handle@0x…, the spelling of an address no petname changes, by which an
+	// app identifies an action's owner on any kernel. "" while it is unknown.
 	KeyAddress func(handle string) string
 
 	// Label is a party as a compact place of a page names it (ui-grammar
 	// "Naming"): its kernel by petname, else by its nickname marked ~, else by
-	// its key shortened, the key added once two kernels claim one nickname.
+	// its address shortened, the address added once two kernels claim one
+	// nickname.
 	Label func(p client.Party) string
 
 	// Unasked reports whether a run at price may be made without asking the

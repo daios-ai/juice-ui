@@ -41,7 +41,7 @@ const (
 	keyGrantState   = "grant_state"   // opaque state for an in-flight OAuth grant consent
 	keyGrantAction  = "grant_action"  // the action the in-flight grant is for (for the return redirect)
 	keyGrantAccount = "grant_account" // the account that began it
-	keyKernelKey    = "kernel_public_key"
+	keyKernelAddr   = "kernel_address"
 	keyKernelNet    = "kernel_network_fingerprint"
 	keyLoginAt      = "login_at" // unix nanoseconds of the first sign-in
 )
@@ -78,12 +78,12 @@ type account struct {
 // acting is the account in use, nil when there is none.
 func (e *live) acting() *account { return e.accounts[e.using] }
 
-// Pin is the kernel this session signed in to: its public key and the
+// Pin is the kernel this session signed in to: its address and the
 // fingerprint of the world it serves. A client sends a stored credential only to the server it
 // recorded (ecosystem-standard §5), so every authenticated request compares this
 // against what the kernel now reports and refuses a server that has changed.
 type Pin struct {
-	PublicKey          string
+	Kernel             string
 	NetworkFingerprint string
 }
 
@@ -265,7 +265,7 @@ func (m *Manager) Login(ctx context.Context, t client.Tokens, address string, pi
 	if err != nil {
 		return client.Tokens{}, err
 	}
-	m.sm.Put(ctx, keyKernelKey, pin.PublicKey)
+	m.sm.Put(ctx, keyKernelAddr, pin.Kernel)
 	m.sm.Put(ctx, keyKernelNet, pin.NetworkFingerprint)
 	m.sm.Put(ctx, keyLoginAt, now.UnixNano())
 	return client.Tokens{}, nil
@@ -315,7 +315,7 @@ func (m *Manager) renew(ctx context.Context, fn func(*live)) (bool, error) {
 // kernel we cannot name, and that is exactly what must not be trusted.
 func (m *Manager) Pin(ctx context.Context) Pin {
 	return Pin{
-		PublicKey:          m.sm.GetString(ctx, keyKernelKey),
+		Kernel:             m.sm.GetString(ctx, keyKernelAddr),
 		NetworkFingerprint: m.sm.GetString(ctx, keyKernelNet),
 	}
 }

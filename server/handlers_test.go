@@ -56,8 +56,8 @@ func mutationTarget(r *http.Request) string {
 
 func fakeHealth(mux *http.ServeMux) {
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"status":"ok","handle":"testnet","public_key":"ABCDEFGHIJKLMNOPQRSTAUVWXYZ0123456789abcdefg",
-		 "network":"play","network_fingerprint":"D1","decimals":0,"symbol":"credits","blockchain_address":""}`))
+		w.Write([]byte(`{"status":"ok","handle":"testnet","blockchain_address":"0x5e7f00d1c0ffee5e7f00d1c0ffee5e7f00d1abcd",
+		 "network":"play","network_fingerprint":"D1","decimals":0,"symbol":"credits"}`))
 	})
 }
 
@@ -303,7 +303,7 @@ func authKernel() *httptest.Server {
 		// the route says which namespace it takes, so a name that exists in the
 		// other one is simply not found.
 		h := r.PathValue("handle")
-		if len(h) >= client.KeyLen {
+		if client.IsChainAddress(h) {
 			w.WriteHeader(http.StatusNotFound)
 			w.Write([]byte(`{"code":"not_found","error":"` + h + ` is not a user here"}`))
 			return
@@ -319,15 +319,15 @@ func authKernel() *httptest.Server {
 	})
 	// The peer namespace: the same verbs, refusing a user target.
 	mux.HandleFunc("POST /v1/admin/peers/{key}/suspend", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"public_key":"` + r.PathValue("key") + `","petname":"peerb","suspended_at":"2026-09-14T01:14:24Z"}`))
+		w.Write([]byte(`{"blockchain_address":"` + r.PathValue("key") + `","petname":"peerb","suspended_at":"2026-09-14T01:14:24Z"}`))
 	})
 	mux.HandleFunc("POST /v1/admin/peers/{key}/unsuspend", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"public_key":"` + r.PathValue("key") + `","petname":"peerb"}`))
+		w.Write([]byte(`{"blockchain_address":"` + r.PathValue("key") + `","petname":"peerb"}`))
 	})
 	mux.HandleFunc("POST /v1/admin/peers/{key}/rename", func(w http.ResponseWriter, r *http.Request) {
 		b, _ := io.ReadAll(r.Body)
 		lastRename = r.PathValue("key") + " " + string(b)
-		w.Write([]byte(`{"public_key":"` + r.PathValue("key") + `","petname":"renamed"}`))
+		w.Write([]byte(`{"blockchain_address":"` + r.PathValue("key") + `","petname":"renamed"}`))
 	})
 	mux.HandleFunc("POST /v1/admin/users/{handle}/rename", func(w http.ResponseWriter, r *http.Request) {
 		b, _ := io.ReadAll(r.Body)
@@ -344,7 +344,7 @@ func authKernel() *httptest.Server {
 		// ledger entry it wrote; a replay returns that same entry. Ledger
 		// entries carry no id. A peer key here is not a user (§2).
 		h := r.PathValue("handle")
-		if len(h) >= client.KeyLen {
+		if client.IsChainAddress(h) {
 			w.WriteHeader(http.StatusNotFound)
 			w.Write([]byte(`{"code":"not_found","error":"` + h + ` is not a user here"}`))
 			return
@@ -381,12 +381,12 @@ func authKernel() *httptest.Server {
 		// but no credit, and no PETNAME until one is bound — only its self-asserted
 		// nickname, which "twin" repeats across two keys, legally, so they must
 		// stay two rows. A suspended counterparty appears only under ?all=1.
-		rows := `{"petname":"peerb","nickname":"peerb","public_key":"KEYB","traded":true,"actions":4,"last_seen":"2026-08-04T09:54:01Z","last_contact_failed_at":"2026-08-04T10:00:00Z"},
-		  {"petname":"debtor","public_key":"KEYD","traded":true,"actions":0},
-		  {"nickname":"twin","public_key":"KEYT1","traded":false,"actions":13,"last_seen":"2026-08-06T00:04:34Z"},
-		  {"petname":"twin","nickname":"twin","public_key":"KEYT2","traded":false,"actions":7,"last_seen":"2026-08-06T00:04:35Z"}`
+		rows := `{"petname":"peerb","nickname":"peerb","blockchain_address":"KEYB","traded":true,"actions":4,"last_seen":"2026-08-04T09:54:01Z","last_contact_failed_at":"2026-08-04T10:00:00Z"},
+		  {"petname":"debtor","blockchain_address":"KEYD","traded":true,"actions":0},
+		  {"nickname":"twin","blockchain_address":"KEYT1","traded":false,"actions":13,"last_seen":"2026-08-06T00:04:34Z"},
+		  {"petname":"twin","nickname":"twin","blockchain_address":"KEYT2","traded":false,"actions":7,"last_seen":"2026-08-06T00:04:35Z"}`
 		if r.URL.Query().Get("all") == "1" {
-			rows += `,{"petname":"frozen","public_key":"KEYS","traded":true,"suspended_at":"2026-08-01T00:00:00Z"}`
+			rows += `,{"petname":"frozen","blockchain_address":"KEYS","traded":true,"suspended_at":"2026-08-01T00:00:00Z"}`
 		}
 		// A bare array: the kernel envelopes no list (API.md R6; verified live
 		// 2026-08-05 — an envelope here would silently render zero peers).
@@ -406,7 +406,7 @@ func authKernel() *httptest.Server {
 		if key == "KEYS" {
 			suspended = `"2026-08-01T00:00:00Z"`
 		}
-		w.Write([]byte(`{"petname":"peerb","nickname":"peerb","public_key":"` + key + `","about":"","blockchain_address":"",
+		w.Write([]byte(`{"petname":"peerb","nickname":"peerb","blockchain_address":"` + key + `","about":"","blockchain_address":"",
 		 "first_seen":"2026-09-14T01:13:39Z","last_seen":"2026-08-04T09:54:01Z","suspended_at":` + suspended + `}`))
 	})
 	mux.HandleFunc("GET /v1/admin/peers/{key}/inspect", func(w http.ResponseWriter, r *http.Request) {
@@ -419,7 +419,7 @@ func authKernel() *httptest.Server {
 		// the kernel has never learned.
 		key := r.PathValue("key")
 		if key == "KEYNONE" {
-			w.Write([]byte(`{"handle":"","public_key":"` + key + `","actions":[],"evidence":[],
+			w.Write([]byte(`{"handle":"","blockchain_address":"` + key + `","actions":[],"evidence":[],
 			 "online":false,"source":"none","reachability":{"path":"unreachable","error":"routing: not found"}}`))
 			return
 		}
@@ -429,11 +429,11 @@ func authKernel() *httptest.Server {
 		if strings.HasPrefix(key, "KEYT") {
 			names = `"petname":"","nickname":"twin"`
 		}
-		w.Write([]byte(`{` + names + `,"public_key":"` + key + `","about":"a peer kernel",
+		w.Write([]byte(`{` + names + `,"blockchain_address":"` + key + `","about":"a peer kernel",
 		 "actions":[{"action_id":"a2","name":{"address":"synth@kernelc/make","principal":"synth@kernelc/make"},"description":"synth","price":20,"indicative":true}],
-		 "evidence":[{"issuer_public_key":"` + key + `","subject_action_id":"a2","uses":6,"successes":6,"failures":0,
+		 "evidence":[{"issuer_kernel":"` + key + `","subject_action_id":"a2","uses":6,"successes":6,"failures":0,
 		    "corroborated_uses":0,"avg_latency_ms":690.5,"rating_count":2,"rating_mean":1,"unverified_ratings":1},
-		   {"issuer_public_key":"KEYB","subject_action_id":"a2","uses":1,"successes":0,"failures":1,
+		   {"issuer_kernel":"KEYB","subject_action_id":"a2","uses":1,"successes":0,"failures":1,
 		    "corroborated_uses":1,"avg_latency_ms":0,"rating_count":0,"rating_mean":0,"unverified_ratings":0}],
 		 "online":true,"source":"live",
 		 "reachability":{"path":"direct","rtt_millis":4,"protocols":["/juice/fed/gossip/1"]}}`))
@@ -442,7 +442,7 @@ func authKernel() *httptest.Server {
 		// v0.14: the kernel's identity, the money rules it serves under, its rail
 		// position, and its credit position — what it has delivered unpaid against
 		// the limit it set (kernel §D14). `stop` is absent unless the rail halts.
-		w.Write([]byte(`{"handle":"kernel","public_key":"KEY","about":"our test kernel","addrs":[],
+		w.Write([]byte(`{"handle":"kernel","blockchain_address":"KEY","about":"our test kernel","addrs":[],
 		 "network":"play","network_fingerprint":"ef1f","blockchain_address":"","finalized":null,
 		 "sys":{"earnings":170,"pending_payouts":0,"held_deposits":0,"refill_locks":0},
 		 "solvency":{"liabilities":8126,"vault":8126,"gap":0},
@@ -746,7 +746,7 @@ func TestDiscoverNarrowsToAnOwner(t *testing.T) {
 
 	// A local owner reached by key with no action listed is headed by this
 	// kernel's name, not its key.
-	if head := getBody(t, cl, srv.URL+"/browse?owner=sys@ABCDEFGHIJKLMNOPQRSTAUVWXYZ0123456789abcdefg"); !strings.Contains(head, `<h2><span class="name mono"`) || !strings.Contains(head, `<span class="owner">sys@testnet</span>`) {
+	if head := getBody(t, cl, srv.URL+"/browse?owner=sys@0x5e7f00d1c0ffee5e7f00d1c0ffee5e7f00d1abcd"); !strings.Contains(head, `<h2><span class="name mono"`) || !strings.Contains(head, `<span class="owner">sys@testnet</span>`) {
 		t.Error("a local owner's page is headed by its name, not its key")
 	}
 	// Someone else's name: caller-visible active set only — no private/inactive.
@@ -932,7 +932,7 @@ func TestWalletPayInAndWithdrawalFollowTheWorld(t *testing.T) {
 func TestWalletOffersWithdrawalOnAnAddressWorld(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"status":"ok","handle":"tango","public_key":"PK","network":"test","network_fingerprint":"D9","decimals":6,"symbol":"USDC","blockchain_address":"0xKERNEL"}`))
+		w.Write([]byte(`{"status":"ok","handle":"tango","network":"test","network_fingerprint":"D9","decimals":6,"symbol":"USDC","blockchain_address":"0xKERNEL","token":"0xTOKEN"}`))
 	})
 	mux.HandleFunc("POST /v1/auth/authorize", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"redirect":"?code=C"}`))
@@ -988,7 +988,7 @@ func TestWalletFundsAndWithdrawsThroughReviews(t *testing.T) {
 	registered, sent := "0xalice", ""
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"status":"ok","handle":"tango","public_key":"PK","network":"anvil","network_fingerprint":"7d16b1469f57f12eb983417f64de442bdb7b06909e26a65daa8bcd311bb80d9b","decimals":6,"symbol":"USDT0","token":"0x5fbdb2315678afecb367f032d93f642f64180aa3","blockchain_address":"0xvault"}`))
+		w.Write([]byte(`{"status":"ok","handle":"tango","blockchain_address":"PK","network":"anvil","network_fingerprint":"7d16b1469f57f12eb983417f64de442bdb7b06909e26a65daa8bcd311bb80d9b","decimals":6,"symbol":"USDT0","token":"0x5fbdb2315678afecb367f032d93f642f64180aa3","blockchain_address":"0xvault"}`))
 	})
 	mux.HandleFunc("POST /v1/auth/authorize", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`{"redirect":"?code=C"}`)) })
 	mux.HandleFunc("POST /v1/auth/token", func(w http.ResponseWriter, r *http.Request) {
@@ -1636,7 +1636,7 @@ func TestKernelIdentityShown(t *testing.T) {
 	if !strings.Contains(login, "Sign in to") || !strings.Contains(login, "testnet") {
 		t.Error("login page must name the kernel it's joining (testnet)")
 	}
-	if !strings.Contains(login, "ABCDEFGHIJ…defg") {
+	if !strings.Contains(login, "0x5e7f…abcd") {
 		t.Error("login page must show the kernel key fingerprint for verification")
 	}
 	// The sidebar brand shows the kernel handle once signed in.
@@ -3000,7 +3000,7 @@ func TestUpdateActionInvalidSchemaRejected(t *testing.T) {
 
 // heldKey is a public key as a task held on another kernel names its holder
 // when no petname is bound for it (4dbfedd).
-const heldKey = "K98AJeQ6631CO6LJ73nKA2PiQW4qY3Nb3eqquXPHYNJ8"
+const heldKey = "0x3c44cdddb6a900fa2b585dd299e03d12fa4293bc"
 
 // taskRows are the tasks bob@testnet may list, one of each kind the inbox
 // distinguishes (requirements.md §6.3).
@@ -3347,7 +3347,7 @@ func TestInboxTaskHeldOnAnotherKernel(t *testing.T) {
 	cl := loginClient(t, srv.URL)
 
 	page := getBody(t, cl, srv.URL+"/inbox")
-	if !strings.Contains(page, `title="`+heldKey+`">`+client.ShortKey(heldKey)+`</span>`) {
+	if !strings.Contains(page, `title="`+heldKey+`">`+client.ShortChainAddress(heldKey)+`</span>`) {
 		t.Errorf("the holder must be named by its truncated key: %s", page)
 	}
 	if !strings.Contains(page, `action="/inbox/SH/complete"`) {
@@ -4342,7 +4342,7 @@ func TestRegisterAddressWrongPasswordKeepsTheSession(t *testing.T) {
 	var sent string
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"status":"ok","handle":"testnet","public_key":"PK","network":"test","network_fingerprint":"D9","decimals":6,"symbol":"USDC","blockchain_address":"0xKERNEL"}`))
+		w.Write([]byte(`{"status":"ok","handle":"testnet","network":"test","network_fingerprint":"D9","decimals":6,"symbol":"USDC","blockchain_address":"0xKERNEL","token":"0xTOKEN"}`))
 	})
 	mux.HandleFunc("POST /v1/auth/authorize", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"redirect":"?code=C"}`))
@@ -5253,9 +5253,9 @@ func TestWalletLeadsWithTheWayMoneyComesIn(t *testing.T) {
 				handle = "sys"
 			}
 			mux := http.NewServeMux()
-			health := `{"status":"ok","handle":"testnet","public_key":"PK","network":"play","decimals":6,"symbol":"fUSD"}`
+			health := `{"status":"ok","handle":"testnet","blockchain_address":"PK","network":"play","decimals":6,"symbol":"fUSD"}`
 			if tc.w.addressed {
-				health = `{"status":"ok","handle":"testnet","public_key":"PK","network":"test","network_fingerprint":"D9","decimals":6,"symbol":"USDC","blockchain_address":"0xKERNEL"}`
+				health = `{"status":"ok","handle":"testnet","network":"test","network_fingerprint":"D9","decimals":6,"symbol":"USDC","blockchain_address":"0xKERNEL","token":"0xTOKEN"}`
 			}
 			mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(health)) })
 			mux.HandleFunc("POST /v1/auth/authorize", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`{"redirect":"?code=C"}`)) })

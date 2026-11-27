@@ -485,12 +485,12 @@
      label (client.Party.Label) in parts: the owner, handle@kernel, emphasized
      and linked to its actions; the path linked to the action's page; the
      kernel alone, which has no page every viewer may open, unlinked. Then the
-     key a nickname stands in for, muted, and a copy of the whole address when
+     address a nickname stands in for, muted, and a copy of the whole address when
      no petname names its kernel. Input: Name. */}}
 {{define "_name"}}<span class="name mono{{if .Path}} ref{{end}}"{{with .Title}} title="{{.}}"{{end}}>
   {{- if .Handle}}<span class="owner">{{if .Owner}}<a href="{{.Owner}}">{{end}}{{.Handle}}@{{.Kernel}}{{if .Owner}}</a>{{end}}</span>{{else}}{{.Kernel}}{{end}}
   {{- with .Path}}/{{if $.Action}}<a href="{{$.Action}}">{{.}}</a>{{else}}{{.}}{{end}}{{end}}</span>
-  {{- with .Key}} <span class="muted mono">{{.}}</span>{{end}}{{with .Copy}} {{template "_copy" (copyOf (or (and $.Handle "address") "key") .)}}{{end}}{{end}}
+  {{- with .Key}} <span class="muted mono">{{.}}</span>{{end}}{{with .Copy}} {{template "_copy" (copyOf "address" .)}}{{end}}{{end}}
 
 {{/* _task_decline is the one form that cancels a task, and _decline_button
      its button. The form is empty and sits outside any other form; the button
@@ -775,7 +775,7 @@
      The displayed name is inert on a discovered card: advertised names collide
      across kernels and the kernel re-aliases one when a deposit promotes it, so
      only a counterparty's alias — an ordinary handle here — links to rename, and
-     every form keys on the public key. */}}
+     every form keys on the address. */}}
 {{/* _peer_contact — the kernel's contact cache, dated and drawing no
      conclusion. `last_seen` is when a verified exchange last succeeded (catalog
      freshness, served for every roster row); `last_contact_failed_at` is when
@@ -809,26 +809,26 @@
 
 {{/* _kernel_row — one kernel in the network's record list (§5.5): its name,
      the peer's label (ui-grammar "Naming"): the petname bound here, else its
-     nickname marked ~, else the shortened key, with its copy; this kernel's
-     own handle; its class and suspension as pills; its key, shortened, with
-     the copy yielding the whole key, which every command taking a kernel
-     takes — empty where the name already is the key; the size of its catalog
+     nickname marked ~, else the shortened address, with its copy; this kernel's
+     own handle; its class and suspension as pills; its address, shortened, with
+     the copy yielding the whole address, which every command taking a kernel
+     takes — empty where the name already is the address; the size of its catalog
      and when an exchange with it last succeeded; and, on a row no petname
      names, the one verb that fills that gap, Name — the same button as on the
      kernel's page (§5.1). A peer's row opens its page, where its about and its
      contact are stated and it is suspended; this kernel's row links nowhere,
      because it is this page. */}}
 {{define "_kernel_row"}}
-{{$current := eq .Class "current"}}{{$n := name .Kernel}}{{$keyName := and (eq .Kernel.Address .PublicKey) (not .Kernel.Nickname)}}
-<tr{{if not $current}} class="rowable" tabindex="-1" data-href="/admin/peers/{{.PublicKey}}"{{end}}>
-  <td>{{if $current}}{{template "_name" (plain (brief .Kernel))}}{{else}}<a href="/admin/peers/{{.PublicKey}}">{{template "_name" (plain (brief .Kernel))}}</a>{{end}}
-    {{- if $keyName}} {{template "_copy" (copyOf "key" .PublicKey)}}{{end}}
+{{$current := eq .Class "current"}}{{$n := name .Kernel}}{{$addressName := and (eq .Kernel.Address .BlockchainAddress) (not .Kernel.Nickname)}}
+<tr{{if not $current}} class="rowable" tabindex="-1" data-href="/admin/peers/{{.BlockchainAddress}}"{{end}}>
+  <td>{{if $current}}{{template "_name" (plain (brief .Kernel))}}{{else}}<a href="/admin/peers/{{.BlockchainAddress}}">{{template "_name" (plain (brief .Kernel))}}</a>{{end}}
+    {{- if $addressName}} {{template "_copy" (copyOf "address" .BlockchainAddress)}}{{end}}
     {{- if $current}} <span class="pill">this kernel</span>{{else if eq .Class "party"}} <span class="pill">party</span>{{end}}
     {{- if .Suspended}} <span class="pill status-danger">suspended</span>{{end}}</td>
-  <td class="mono" data-label="Key">{{if not $keyName}}{{template "_name" (brief (kernelParty "" "" .PublicKey))}}{{end}}</td>
+  <td class="mono" data-label="Address">{{if not $addressName}}{{template "_name" (brief (kernelParty "" "" .BlockchainAddress))}}{{end}}</td>
   <td class="num" data-label="Actions">{{if not $current}}{{.Actions}}{{end}}</td>
   <td data-label="Seen">{{if not $current}}{{with .LastSeen}}{{relTime .}}{{else}}never{{end}}{{end}}</td>
-  <td class="row-actions">{{if and (not $current) $n.Copy}}<a class="btn" href="/admin/peers/{{.PublicKey}}?form=admin-rename">Name</a>{{end}}</td>
+  <td class="row-actions">{{if and (not $current) $n.Copy}}<a class="btn" href="/admin/peers/{{.BlockchainAddress}}?form=admin-rename">Name</a>{{end}}</td>
 </tr>
 {{end}}
 

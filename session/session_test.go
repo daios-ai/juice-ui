@@ -409,7 +409,7 @@ func TestUpdateAppCacheIsOneStep(t *testing.T) {
 // use, Use switches among them, and Logout ends them all.
 func TestASessionHoldsAccounts(t *testing.T) {
 	m, ctx := newCtx(t, &fakeRefresher{})
-	pin := Pin{PublicKey: "K", NetworkFingerprint: "F"}
+	pin := Pin{Kernel: "K", NetworkFingerprint: "F"}
 	if _, err := m.Login(ctx, client.Tokens{AccessToken: "a1", RefreshToken: "r1"}, "sys@k", pin); err != nil {
 		t.Fatal(err)
 	}
@@ -441,7 +441,7 @@ func TestASessionHoldsAccounts(t *testing.T) {
 	if len(m.Accounts(ctx)) != 2 {
 		t.Errorf("no account twice: %v", m.Accounts(ctx))
 	}
-	if _, err := m.Login(ctx, client.Tokens{AccessToken: "x", RefreshToken: "y"}, "ann@other", Pin{PublicKey: "K2"}); !errors.Is(err, ErrOtherKernel) {
+	if _, err := m.Login(ctx, client.Tokens{AccessToken: "x", RefreshToken: "y"}, "ann@other", Pin{Kernel: "K2"}); !errors.Is(err, ErrOtherKernel) {
 		t.Errorf("an account of another kernel is refused: %v", err)
 	}
 	pairs, err := m.Logout(ctx)

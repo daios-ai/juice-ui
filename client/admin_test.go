@@ -147,8 +147,8 @@ func TestAdminPeersAndIdentity(t *testing.T) {
 	// The merged roster: a counterparty (has_account) beside a discovered kernel
 	// that carries a catalog and a last_seen but no account — shapes captured live
 	// 2026-08-06 on three throwaway kernels.
-	f.reply = `[{"petname":"peerb","nickname":"twin","public_key":"KEY","traded":true,"actions":13,"last_seen":"2026-07-12T00:00:00Z"},
-	 {"nickname":"twin","public_key":"KEY2","traded":false,"actions":7,"last_seen":"2026-07-13T00:00:00Z"}]`
+	f.reply = `[{"petname":"peerb","nickname":"twin","blockchain_address":"KEY","traded":true,"actions":13,"last_seen":"2026-07-12T00:00:00Z"},
+	 {"nickname":"twin","blockchain_address":"KEY2","traded":false,"actions":7,"last_seen":"2026-07-13T00:00:00Z"}]`
 	p, err := f.client().AdminListPeers(context.Background(), "tok", false)
 	if err != nil {
 		t.Fatal(err)
@@ -168,8 +168,8 @@ func TestAdminPeersAndIdentity(t *testing.T) {
 	if !p[0].Traded || p[0].Actions != 13 || p[1].Traded || p[1].Actions != 7 {
 		t.Errorf("traded/actions decode wrong: %+v", p)
 	}
-	if p[0].PublicKey == p[1].PublicKey {
-		t.Error("two rows sharing an advertised handle must stay key-distinct")
+	if p[0].BlockchainAddress != "KEY" || p[0].BlockchainAddress == p[1].BlockchainAddress {
+		t.Error("two rows sharing an advertised handle must stay address-distinct")
 	}
 	// The contact cache — when a verified exchange last succeeded. Both classes
 	// carry it; neither carries money.
@@ -184,7 +184,7 @@ func TestAdminPeersAndIdentity(t *testing.T) {
 		t.Errorf("peers all path = %q", f.lastPath)
 	}
 	// ?all=1 surfaces suspended peers, marked by presence of suspended_at (verified live).
-	f.reply = `[{"handle":"peerb","public_key":"KEY","available":0,"locked":0,"suspended_at":"2026-07-19T17:50:24Z"}]`
+	f.reply = `[{"handle":"peerb","blockchain_address":"KEY","available":0,"locked":0,"suspended_at":"2026-07-19T17:50:24Z"}]`
 	dp, err := f.client().AdminListPeers(context.Background(), "tok", true)
 	if err != nil {
 		t.Fatal(err)
@@ -196,12 +196,12 @@ func TestAdminPeersAndIdentity(t *testing.T) {
 	if (Peer{Petname: "x"}).Suspended() {
 		t.Error("a peer without suspended_at must not be Suspended()")
 	}
-	f.reply = `{"handle":"k","public_key":"PK","about":"my kernel","addrs":["/ip4/127.0.0.1/tcp/1"]}`
+	f.reply = `{"handle":"k","blockchain_address":"PK","about":"my kernel","addrs":["PK@127.0.0.1:1"]}`
 	id, err := f.client().AdminIdentity(context.Background(), "tok")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if id.Handle != "k" || id.PublicKey != "PK" || id.About != "my kernel" || len(id.Addrs) != 1 {
+	if id.Handle != "k" || id.BlockchainAddress != "PK" || id.About != "my kernel" || len(id.Addrs) != 1 {
 		t.Errorf("identity decode wrong: %+v", id)
 	}
 }
@@ -215,11 +215,11 @@ func TestAdminListPeersPagesToExhaustion(t *testing.T) {
 	f.replyFn = func(r *http.Request) string {
 		paths = append(paths, r.URL.RequestURI())
 		if strings.Contains(r.URL.RawQuery, "offset=200") {
-			return `[{"petname":"tail","public_key":"K2"}]`
+			return `[{"petname":"tail","blockchain_address":"K2"}]`
 		}
 		rows := make([]string, 200)
 		for i := range rows {
-			rows[i] = `{"petname":"p","public_key":"K1"}`
+			rows[i] = `{"petname":"p","blockchain_address":"K1"}`
 		}
 		return "[" + strings.Join(rows, ",") + "]"
 	}
@@ -242,7 +242,7 @@ func TestAdminPeerRecord(t *testing.T) {
 	f := newFake()
 	defer f.close()
 	f.replyFn = func(r *http.Request) string {
-		return `{"about":"","blockchain_address":"","first_seen":"2026-09-23T13:38:52Z","last_seen":"2026-10-07T19:22:58Z","nickname":"arfante","petname":"arfante","public_key":"PKEY","suspended_at":"2026-10-08T19:20:10Z"}`
+		return `{"about":"","blockchain_address":"PKEY","first_seen":"2026-09-23T13:38:52Z","last_seen":"2026-10-07T19:22:58Z","nickname":"arfante","petname":"arfante","suspended_at":"2026-10-08T19:20:10Z"}`
 	}
 	rec, err := f.client().AdminPeer(context.Background(), "tok", "PKEY")
 	if err != nil {
@@ -251,7 +251,7 @@ func TestAdminPeerRecord(t *testing.T) {
 	if f.lastPath != "/v1/admin/peers/PKEY" {
 		t.Errorf("peer record path = %q", f.lastPath)
 	}
-	if rec.FirstSeen != "2026-09-23T13:38:52Z" || rec.Petname != "arfante" || !rec.Suspended() {
+	if rec.FirstSeen != "2026-09-23T13:38:52Z" || rec.Petname != "arfante" || rec.BlockchainAddress != "PKEY" || !rec.Suspended() {
 		t.Errorf("record = %+v", rec)
 	}
 	if (PeerRecord{}).Suspended() {
@@ -282,9 +282,9 @@ func TestAdminInspectAndPeerSuspend(t *testing.T) {
 	// reachability is the always-offline bug this guards against. As of v0.12.8 an
 	// action row is {name, description, price} only and the account arrives inline
 	// — shapes captured live 2026-08-06.
-	f.reply = `{"handle":"k","public_key":"PKEY","about":"a test kernel","online":true,"source":"live",
+	f.reply = `{"handle":"k","blockchain_address":"PKEY","about":"a test kernel","online":true,"source":"live",
 	 "actions":[{"name":{"address":"seller@bee/greet"},"title":"Greet a person","price":12,"description":"Greets a person."}],
-	 "evidence":[{"issuer_public_key":"ISS1","subject_action_id":"A1","uses":2,"successes":0,"failures":2,
+	 "evidence":[{"issuer_kernel":"ISS1","subject_action_id":"A1","uses":2,"successes":0,"failures":2,
 	   "corroborated_uses":1,"avg_latency_ms":90760.5,"rating_count":0,"rating_mean":0,"unverified_ratings":0}],
 	 "reachability":{"path":"direct","rtt_millis":7,"protocols":["/juice/fed/gossip/1"],"version":"juice-kernel/dev","error":""}}`
 	insp, err := f.client().AdminInspect(context.Background(), "tok", "PKEY")
@@ -307,13 +307,13 @@ func TestAdminInspectAndPeerSuspend(t *testing.T) {
 	// Decoding it into an integer field failed the whole inspection and rendered
 	// the generic error page, so it is not decoded at all; this fixture keeps a
 	// fractional value so re-adding it as an int fails here.
-	if len(insp.Evidence) != 1 || insp.Evidence[0].IssuerPublicKey != "ISS1" ||
+	if len(insp.Evidence) != 1 || insp.Evidence[0].IssuerKernel != "ISS1" || insp.BlockchainAddress != "PKEY" ||
 		insp.Evidence[0].Failures != 2 || insp.Evidence[0].CorroboratedUses != 1 {
 		t.Errorf("evidence not decoded: %+v", insp.Evidence)
 	}
 	// An unreachable peer carries a reason in reachability.error. A well-formed but
 	// wholly unknown key answers source="none" (verified live).
-	f.reply = `{"handle":"k","public_key":"PKEY","online":false,"source":"none",
+	f.reply = `{"handle":"k","blockchain_address":"PKEY","online":false,"source":"none",
 	 "reachability":{"path":"unreachable","error":"routing: not found"}}`
 	insp2, _ := f.client().AdminInspect(context.Background(), "tok", "PKEY")
 	if insp2.Online || insp2.Reachability.Error == "" {
@@ -328,11 +328,11 @@ func TestAdminInspectAndPeerSuspend(t *testing.T) {
 // latency decodes (the kernel emits 90760.5, verified live 2026-08-06).
 func TestSelfEvidenceIsTheSubjectsOwnRows(t *testing.T) {
 	insp := Inspection{
-		PublicKey: "SUBJ",
+		BlockchainAddress: "SUBJ",
 		Evidence: []Evidence{
-			{IssuerPublicKey: "SUBJ", SubjectActionID: "A1", Uses: 3},
-			{IssuerPublicKey: "ISS1", SubjectActionID: "A1", Uses: 2},
-			{IssuerPublicKey: "SUBJ", SubjectActionID: "A2", Uses: 1},
+			{IssuerKernel: "SUBJ", SubjectActionID: "A1", Uses: 3},
+			{IssuerKernel: "ISS1", SubjectActionID: "A1", Uses: 2},
+			{IssuerKernel: "SUBJ", SubjectActionID: "A2", Uses: 1},
 		},
 	}
 	if self := insp.SelfEvidence(); len(self) != 2 || self[0].Uses != 3 || self[1].Uses != 1 {
@@ -352,7 +352,7 @@ func TestSelfEvidenceIsTheSubjectsOwnRows(t *testing.T) {
 func TestIdentityCarriesTheCreditAndRailPosition(t *testing.T) {
 	f := newFake()
 	defer f.close()
-	f.reply = `{"handle":"k","public_key":"PK","addrs":[],"network":"play","network_fingerprint":"ef1f",
+	f.reply = `{"handle":"k","blockchain_address":"PK","addrs":[],"network":"play","network_fingerprint":"ef1f",
 	 "blockchain_address":"","finalized":{"token":5000000,"gas":"0.0421","block":12},
 	 "sys":{"earnings":170,"pending_payouts":0,"held_deposits":0,"refill_locks":0},
 	 "solvency":{"liabilities":8126,"vault":8126,"gap":0},

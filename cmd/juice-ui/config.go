@@ -20,21 +20,24 @@ import (
 type Config struct {
 	KernelBaseURL string
 	// Kernel is the name this UI's kernel is recorded under in the shared client
-	// records (ecosystem-standard §4): its endpoint, public key and network are
-	// then read from $JUICE_HOME/client/config.json rather than taken from an
-	// address. Empty when the UI is pointed at a bare URL instead.
-	Kernel          string
-	KernelPublicKey string
-	KernelNetwork   string
-	ListenAddr      string
-	SessionSecret   string   // optional; derives the CSRF key. Empty -> ephemeral key.
-	Secure          bool     // Secure flag on cookies; enable behind HTTPS.
-	TrustedOrigins  []string // hosts allowed as the request Origin for CSRF (proxied hostnames)
-	PublicURL       string   // absolute base URL for OAuth grant redirect_uri; "" derives from the request
-	Root            string   // the installation root, $JUICE_HOME (the kernel gate reads bin/ and kernels/ under it)
-	Home            string   // the component home, $JUICE_HOME/ui (docs/installation.md)
-	StatePath       string   // resolved path to state.json (machine-written app state)
-	Notices         []string // one-line startup notices (e.g. a legacy path in use, to migrate)
+	// records (ecosystem-standard §4): its endpoint, address and network are
+	// then read from $JUICE_HOME/client/config.json rather than taken from a
+	// URL. Empty when the UI is pointed at a bare URL instead.
+	Kernel string
+	// KernelAddress is the address the kernel must answer with; "" when the
+	// UI was given a bare URL, or a record a kernel before v0.23 wrote, and
+	// the kernel is asked for it.
+	KernelAddress  string
+	KernelNetwork  string
+	ListenAddr     string
+	SessionSecret  string   // optional; derives the CSRF key. Empty -> ephemeral key.
+	Secure         bool     // Secure flag on cookies; enable behind HTTPS.
+	TrustedOrigins []string // hosts allowed as the request Origin for CSRF (proxied hostnames)
+	PublicURL      string   // absolute base URL for OAuth grant redirect_uri; "" derives from the request
+	Root           string   // the installation root, $JUICE_HOME (the kernel gate reads bin/ and kernels/ under it)
+	Home           string   // the component home, $JUICE_HOME/ui (docs/installation.md)
+	StatePath      string   // resolved path to state.json (machine-written app state)
+	Notices        []string // one-line startup notices (e.g. a legacy path in use, to migrate)
 
 	// BadgeInterval is the heartbeat's slow lane — how often a page refreshes
 	// its nav badges, a parked process and a peer card — and how long the task
@@ -133,7 +136,7 @@ func LoadConfig(getenv func(string) string, readFile func(string) ([]byte, error
 		cfg.BadgeInterval = 5 * time.Second
 	}
 
-	// A named kernel is THE kernel: its recorded endpoint, key and network come
+	// A named kernel is THE kernel: its recorded endpoint, address and network come
 	// from the client records every juice program shares, and a bare address
 	// given beside it is ignored — what a server says about itself is a claim,
 	// what the record says is what was verified when the kernel was registered.
@@ -145,7 +148,7 @@ func LoadConfig(getenv func(string) string, readFile func(string) ([]byte, error
 		if fromURL := strings.TrimSpace(fc.kernelURL()) != "" || strings.TrimSpace(getenv("JUICE_KERNEL_URL")) != ""; fromURL {
 			cfg.Notices = append(cfg.Notices, "kernel_url is ignored: this UI names kernel "+cfg.Kernel)
 		}
-		cfg.KernelBaseURL, cfg.KernelPublicKey, cfg.KernelNetwork = rec.Endpoint, rec.PublicKey, rec.Network
+		cfg.KernelBaseURL, cfg.KernelAddress, cfg.KernelNetwork = rec.Endpoint, rec.BlockchainAddress, rec.Network
 	}
 
 	u, err := url.Parse(cfg.KernelBaseURL)
@@ -200,11 +203,12 @@ func (fc *fileConfig) kernelURL() string {
 }
 
 // kernelRecord is one kernel as the client records know it (ecosystem-standard
-// §4): where it answers, the key it must present, and the network it serves.
+// §4): where it answers, the address it must present, and the network it
+// serves. A record a kernel before v0.23 wrote holds no address.
 type kernelRecord struct {
-	Endpoint  string `json:"endpoint"`
-	PublicKey string `json:"public_key"`
-	Network   string `json:"network"`
+	Endpoint          string `json:"endpoint"`
+	BlockchainAddress string `json:"blockchain_address"`
+	Network           string `json:"network"`
 }
 
 // clientConfig is the shape of $JUICE_HOME/client/config.json: the kernels this
@@ -237,10 +241,25 @@ func kernelRecordFor(root, name string, readFile func(string) ([]byte, error)) (
 	if !ok {
 		return kernelRecord{}, fmt.Errorf("kernel %q is not in %s (run `juice kernel add URL %s`)", name, path, name)
 	}
-	if rec.Endpoint == "" || rec.PublicKey == "" {
-		return kernelRecord{}, fmt.Errorf("kernel %q in %s records no endpoint or public key", name, path)
+	if rec.Endpoint == "" {
+		return kernelRecord{}, fmt.Errorf("kernel %q in %s records no endpoint", name, path)
 	}
 	return rec, nil
+}
+
+// identify settles the address the kernel must answer with, once whether an
+// old kernel lives here is known. The old kernel's address is not the new
+// one's, so the new one is asked for its own. Any other named kernel recorded
+// without an address, as kernels were before v0.23, binds its name to no
+// identity: it is registered again rather than taken at its word.
+func (c *Config) identify(old bool) error {
+	switch {
+	case old:
+		c.KernelAddress = ""
+	case c.Kernel != "" && c.KernelAddress == "":
+		return fmt.Errorf("kernel %q is recorded without an address; register it again: juice kernel forget %s, then juice kernel add %s", c.Kernel, c.Kernel, c.KernelBaseURL)
+	}
+	return nil
 }
 
 // loadConfigFile reads and parses the operator config file — $JUICE_HOME/ui/

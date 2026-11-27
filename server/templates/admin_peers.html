@@ -21,7 +21,6 @@
   <dt title="Face value of the ticket this kernel writes to settle a small debt to another kernel; 0 pays every debt exactly.">Ticket</dt><dd><span class="money">{{money $i.Lottery}}</span> <span class="mono muted">lottery</span></dd>
   <dt title="Largest ticket this kernel accepts from a buyer.">Largest ticket</dt><dd><span class="money">{{money $i.LotteryMax}}</span> <span class="mono muted">lottery_max</span></dd>
 </dl>
-{{if $i.BlockchainAddress}}<p class="small muted">paid at {{template "_addr" (copyOf "address" $i.BlockchainAddress)}}</p>{{end}}
 {{/* What the vault held at the last finalized block — a snapshot the kernel
      read, not a live balance: the token, and the native coin its payouts burn
      in fees, as served. */}}
@@ -77,12 +76,12 @@
      network, each class marked by a pill (§6.6). */}}
 <div class="row control-row">
   {{if $d.ShowSuspended}}<a class="btn" href="/admin/peers">Hide suspended</a>{{else}}<a class="btn" href="/admin/peers?all=1">Show suspended</a>{{end}}
-  <a class="btn" href="/admin/peers?form=admin-inspect" data-modal="form-admin-inspect">+ inspect a kernel by key</a>
+  <a class="btn" href="/admin/peers?form=admin-inspect" data-modal="form-admin-inspect">+ inspect a kernel by address</a>
 </div>
 {{if $d.Kernels}}
 <div class="table-scroll">
 <table class="records">
-  <thead><tr><th>Kernel</th><th>Key</th><th class="num">Actions</th><th>Seen</th><th></th></tr></thead>
+  <thead><tr><th>Kernel</th><th>Address</th><th class="num">Actions</th><th>Seen</th><th></th></tr></thead>
   <tbody>{{range $d.Kernels}}{{template "_kernel_row" .}}{{end}}</tbody>
 </table>
 </div>
@@ -90,17 +89,17 @@
 {{template "_pager" $d.Pager}}
 {{template "_form_admin_deposit" .}}
 
-{{/* Inspecting is a pure read of a kernel named by key, so the form is a GET
+{{/* Inspecting is a pure read of a kernel named by address, so the form is a GET
      that lands on the canonical inspect URL. It is the successor to the retired
      subscribe opener: the kernel serves no directory of discovered kernels, so a
-     key learned elsewhere (a discovered lookup result, an operator) needs a way
+     address learned elsewhere (a discovered lookup result, an operator) needs a way
      in. */}}
-<dialog id="form-admin-inspect" class="modal-form"{{if eq $d.OpenForm "admin-inspect"}} open{{end}} aria-label="Inspect a kernel by key">
-  <div class="modal-head"><h2>Inspect a kernel by key</h2><a class="modal-close" href="/admin/peers" data-modal-close aria-label="Close">×</a></div>
+<dialog id="form-admin-inspect" class="modal-form"{{if eq $d.OpenForm "admin-inspect"}} open{{end}} aria-label="Inspect a kernel by address">
+  <div class="modal-head"><h2>Inspect a kernel by address</h2><a class="modal-close" href="/admin/peers" data-modal-close aria-label="Close">×</a></div>
   <div class="modal-body">
     <form class="stack" method="get" action="/admin/peers/inspect">
       <div class="field">
-        <label for="insp-key">Kernel public key</label>
+        <label for="insp-key">Kernel address</label>
         <input id="insp-key" name="key" type="text" class="mono" required>
       </div>
       <div class="cluster">

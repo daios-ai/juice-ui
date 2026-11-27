@@ -39,31 +39,31 @@ func StaticFS() fs.FS {
 
 // Page is the data passed to the layout for a full-page render.
 type Page struct {
-	Title        string
-	Theme        string        // theme slug, or "" to defer to prefers-color-scheme
-	Sidebar      string        // "collapsed" | "" (expanded); stamped to avoid flash
-	Commands     []Command     // the registry: the avatar menu's destinations and the launcher's entries
-	Rail         template.HTML // the conversations rail, the sidebar's content
-	Me           string        // the account in use, or "" when anonymous
-	Accounts     []string      // every account the session holds, as signed in (the avatar menu)
-	KernelHandle string        // this kernel's own name (from /health), or "" if unknown
-	KernelKey    string        // this kernel's public key, shown shortened with its copy for pre-auth verification (login only)
-	KernelNet    string        // the network this kernel serves, named on the login page
-	KernelName   string        // the name this kernel is recorded under, when the UI names one
-	IsSuperuser  bool          // Me == sys@<kernel>: show the admin group and admin scope
-	Available    int64         // signed-in user's available balance; 0 when unknown
-	Themes       []ANSIPalette // selectable terminal themes for the picker
-	CSRFField    template.HTML // hidden CSRF input for no-JS forms
-	CSRFToken    string        // raw token for the <meta> tag htmx reads
-	Launcher     template.JS   // the registry as the launcher reads it (inert JSON)
-	Flash        string        // transient user message
-	FlashKind    string        // "success" | "error" | "info" | ""
-	BadgeSecs    int           // the heartbeat's slow lane, in seconds (badges, receipts, peers)
-	Path         string        // current path, for links that must return to it
-	DrawerOpen   bool          // ?drawer=open: the narrow screen's drawer, open (no-JS path)
-	Update       *updateView   // the superuser's update notice; nil for anyone else
-	SignIn       signInView    // the Sign in dialog of a signed-in page
-	Data         any           // page-specific view model
+	Title         string
+	Theme         string        // theme slug, or "" to defer to prefers-color-scheme
+	Sidebar       string        // "collapsed" | "" (expanded); stamped to avoid flash
+	Commands      []Command     // the registry: the avatar menu's destinations and the launcher's entries
+	Rail          template.HTML // the conversations rail, the sidebar's content
+	Me            string        // the account in use, or "" when anonymous
+	Accounts      []string      // every account the session holds, as signed in (the avatar menu)
+	KernelHandle  string        // this kernel's own name (from /health), or "" if unknown
+	KernelAddress string        // this kernel's address, shown shortened with its copy for pre-auth verification (login only)
+	KernelNet     string        // the network this kernel serves, named on the login page
+	KernelName    string        // the name this kernel is recorded under, when the UI names one
+	IsSuperuser   bool          // Me == sys@<kernel>: show the admin group and admin scope
+	Available     int64         // signed-in user's available balance; 0 when unknown
+	Themes        []ANSIPalette // selectable terminal themes for the picker
+	CSRFField     template.HTML // hidden CSRF input for no-JS forms
+	CSRFToken     string        // raw token for the <meta> tag htmx reads
+	Launcher      template.JS   // the registry as the launcher reads it (inert JSON)
+	Flash         string        // transient user message
+	FlashKind     string        // "success" | "error" | "info" | ""
+	BadgeSecs     int           // the heartbeat's slow lane, in seconds (badges, receipts, peers)
+	Path          string        // current path, for links that must return to it
+	DrawerOpen    bool          // ?drawer=open: the narrow screen's drawer, open (no-JS path)
+	Update        *updateView   // the superuser's update notice; nil for anyone else
+	SignIn        signInView    // the Sign in dialog of a signed-in page
+	Data          any           // page-specific view model
 }
 
 // Renderer holds parsed templates. Each page is parsed together with the layout
@@ -254,7 +254,7 @@ func NewRenderer(identity *KernelIdentity, appTemplates ...fs.FS) (*Renderer, er
 		"download":       resultDownload,
 		"statusClass":    statusClass,
 		"truncate":       truncate,
-		"shortAddr":      shortAddr,
+		"shortAddr":      client.ShortAddress,
 		"costOf":         costOf,
 		"buildForm":      BuildForm,     // lets templates derive a FormModel from a raw schema
 		"taskForm":       BuildTaskForm, // a form with sealed arguments: the schema and its sealed part
@@ -562,17 +562,6 @@ func truncate(n int, s string) string {
 	return s[:n] + "…"
 }
 
-// shortAddr abbreviates a chain address the way wallets do, 0x7099…79c8: enough
-// to match by eye, the whole value in its title and its copy control (_addr). A
-// Juice address naming its kernel by key shows the key as client.ShortKey does;
-// anything else passes unchanged.
-func shortAddr(a string) string {
-	if len(a) != 42 || !strings.HasPrefix(a, "0x") {
-		return client.ShortAddress(a)
-	}
-	return a[:6] + "…" + a[38:]
-}
-
 // bps renders a rate the config file sets in basis points as its exact
 // percentage, without trailing zeros: 2000 → "20", 250 → "2.5".
 func bps(n int64) string { return strconv.FormatFloat(float64(n)/100, 'f', -1, 64) }
@@ -623,8 +612,8 @@ func priceOf(price int64, indicative bool) PriceView {
 // It exists because the kernel's naming is Stiegler's petname system (§13) and
 // the three name classes are NOT interchangeable: a petname is bound here and
 // resolves, so it is shown alone; a nickname is the kernel's claim about
-// itself and never resolves, so it is shown marked ~ with its key beside it
-// where there is room; a key is self-certifying but unreadable, so it is shown
+// itself and never resolves, so it is shown marked ~ with its address beside it
+// where there is room; an address is self-certifying but unreadable, so it is shown
 // shortened, with the whole value in the title and on the copy control.
 type Name struct {
 	Handle, Kernel, Path string // the label's parts; Handle and Path "" for a kernel
@@ -748,7 +737,7 @@ func (r *Renderer) nameOf(p client.Party, roomy bool, id string) Name {
 	}
 	if key := p.Claim(); key != "" {
 		if clash := r.claims.claim(p.Nickname, key); roomy || clash {
-			n.Key = client.ShortKey(key)
+			n.Key = client.ShortChainAddress(key)
 		}
 	}
 	if p.Principal == "" {
@@ -798,7 +787,7 @@ func (r *Renderer) Label(p client.Party) string {
 }
 
 // actionHref is THE address of an action's page: one route, keyed by the
-// action's address with its kernel spelled by key, which no petname changes
+// action's address with its kernel spelled by address, which no petname changes
 // (ui-grammar "Names"), whether the action is this kernel's or another's. id is
 // given only by a record of a past call: an inactive copy of another kernel's
 // action re-resolves when named, so with that kernel away only its id reads the
@@ -931,7 +920,7 @@ type evidenceRow struct {
 	Subject        *client.Party // the action, where its address is known
 	SubjectID      string        // its id, shown where its address is not
 	Strip          StatStrip
-	Source         client.Party // the issuing kernel, by key
+	Source         client.Party // the issuing kernel, by address
 	Provider       bool         // the report is the provider's own
 	Contradictions int64
 }
@@ -960,8 +949,8 @@ func evidenceOf(rows []client.Evidence, provider string, names map[string]client
 				},
 				Corroborated: e.CorroboratedUses, Unverified: e.UnverifiedRating,
 			},
-			Source:         kernelParty("", "", e.IssuerPublicKey),
-			Provider:       e.IssuerPublicKey == provider,
+			Source:         kernelParty("", "", e.IssuerKernel),
+			Provider:       e.IssuerKernel == provider,
 			Contradictions: e.Contradictions,
 		})
 	}
@@ -1000,7 +989,7 @@ func actionEvidence(a client.Action) *evidenceTable {
 	var rows []client.Evidence
 	provider := ""
 	if p := a.Evidence.ProviderReported; p != nil {
-		rows, provider = append(rows, *p), p.IssuerPublicKey
+		rows, provider = append(rows, *p), p.IssuerKernel
 	}
 	return evidenceOf(append(rows, a.Evidence.ObservedByOthers...), provider, nil)
 }
@@ -1012,7 +1001,7 @@ func peerEvidence(i client.Inspection) *evidenceTable {
 	for _, a := range i.Actions {
 		names[a.ActionID] = a.Name
 	}
-	return evidenceOf(i.Evidence, i.PublicKey, names)
+	return evidenceOf(i.Evidence, i.BlockchainAddress, names)
 }
 
 // progressView is one in-flight bar (_progress): its id, which an

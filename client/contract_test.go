@@ -119,7 +119,7 @@ func (l *ledger) walk(t reflect.Type, v any) {
 type k struct {
 	t      *testing.T
 	api    string
-	fed    string // its 127.0.0.1 federation address, /ip4/…/p2p/<id>
+	fed    string // its 127.0.0.1 seed line, 0x…@127.0.0.1:<port>
 	health client.Health
 	stop   func()
 	c      *client.Client
@@ -251,7 +251,7 @@ func boot(t *testing.T, led *ledger, bin, handle, world string, worldFile map[st
 		resp.Body.Close()
 	}
 	for _, a := range fed.FedAddrs {
-		if strings.HasPrefix(a, "/ip4/127.0.0.1/tcp/") {
+		if strings.Contains(a, "@127.0.0.1:") {
 			kk.fed = a
 		}
 	}
@@ -605,7 +605,7 @@ func TestKernelContract(t *testing.T) {
 	get(a, "deposit alice", func() (client.LedgerEntry, error) {
 		return a.c.AdminDeposit(ctx, sys, a.addr("alice"), 50_000_000, "contract-3", "seed")
 	})
-	farRef := "alice@" + a.health.PublicKey + "/far" // an unnamed kernel is named by its key
+	farRef := "alice@" + a.health.BlockchainAddress + "/far" // an unnamed kernel is named by its address
 	eventually(t, "bravo discovers "+farRef, func() bool {
 		for _, x := range get(bv, "catalog", func() ([]client.Action, error) { return bv.c.ListActions(ctx, dave, "") }) {
 			if x.Action.Address == farRef && x.Discovered {
@@ -632,13 +632,13 @@ func TestKernelContract(t *testing.T) {
 	})
 	// Money to a user of another kernel: the payment's state rides on the transaction.
 	treply := get(a, "transfer to dave", func() (client.CallReply, error) {
-		return a.c.Run(ctx, bob, a.addr("sys")+"/transfer", json.RawMessage(`{"target":"dave@`+bv.health.PublicKey+`","amount":1000000}`), "")
+		return a.c.Run(ctx, bob, a.addr("sys")+"/transfer", json.RawMessage(`{"target":"dave@`+bv.health.BlockchainAddress+`","amount":1000000}`), "")
 	})
 	get(a, "transfer transaction", func() (client.Transaction, error) { return a.c.GetTransaction(ctx, bob, treply.TxID) })
 	get(a, "owed", func() (client.Deposits, error) { return a.c.AdminListDeposits(ctx, sys) })
 	get(bv, "peers", func() ([]client.Peer, error) { return bv.c.AdminListPeers(ctx, bsys, true) })
 	get(a, "peers", func() ([]client.Peer, error) { return a.c.AdminListPeers(ctx, sys, true) })
-	key := a.health.PublicKey
+	key := a.health.BlockchainAddress
 	done(bv, "name alpha", bv.c.AdminRenamePeer(ctx, bsys, key, "alpha"))
 	done(bv, "suspend alpha", bv.c.AdminSuspendPeer(ctx, bsys, key))
 	get(bv, "suspended peers", func() ([]client.Peer, error) { return bv.c.AdminListPeers(ctx, bsys, true) })
@@ -646,12 +646,12 @@ func TestKernelContract(t *testing.T) {
 	done(bv, "unsuspend alpha", bv.c.AdminUnsuspendPeer(ctx, bsys, key))
 	get(bv, "inspect alpha", func() (client.Inspection, error) { return bv.c.AdminInspect(ctx, bsys, key) })
 	get(bv, "inspect a stranger", func() (client.Inspection, error) {
-		return bv.c.AdminInspect(ctx, bsys, "A6cNHvNorZnpDVCUlumIjudATk9NNgN2v1IddpzwxN5G")
+		return bv.c.AdminInspect(ctx, bsys, "0x1111111111111111111111111111111111111111")
 	})
 
 	// A task alpha holds for a caller on bravo waits on that peer. Alpha has no
-	// name for bravo (only an operator binds one), so dave is named by its key.
-	up.park.caller = "dave@" + bv.health.PublicKey
+	// name for bravo (only an operator binds one), so dave is named by its address.
+	up.park.caller = "dave@" + bv.health.BlockchainAddress
 	get(a, "run park for dave", func() (client.CallReply, error) {
 		return a.c.Run(ctx, alice, a.addr("alice")+"/park", json.RawMessage(`{"x":"p"}`), "")
 	})
@@ -659,7 +659,7 @@ func TestKernelContract(t *testing.T) {
 
 	// A seller that dies mid-call: bravo's buyer is left awaiting a receipt it
 	// may owe, and bravo's next contact with alpha fails.
-	hangRef := "alice@" + a.health.PublicKey + "/hang"
+	hangRef := "alice@" + a.health.BlockchainAddress + "/hang"
 	eventually(t, "bravo discovers "+hangRef, func() bool {
 		_, found, err := bv.c.ResolveRef(ctx, dave, hangRef)
 		bv.rec.take()
@@ -779,7 +779,7 @@ func chainWorld(t *testing.T, led *ledger, bin string) {
 	erin := get(c, "create erin", func() (client.User, error) { return c.c.CreateUser(ctx, c.addr("erin"), "erin-password", "") })
 	etok := c.login(c.addr("erin"), "erin-password")
 	sig := sh(t, "cast", "wallet", "sign", "--private-key", walletKey,
-		wallet.Message(c.health.PublicKey, erin.ID, walletAddr))
+		wallet.Message(c.health.BlockchainAddress, erin.ID, walletAddr))
 	res := get(c, "register", func() (client.AddressResult, error) {
 		return c.c.RegisterAddress(ctx, etok, walletAddr, sig, "erin-password")
 	})

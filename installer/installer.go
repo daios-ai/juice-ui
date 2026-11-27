@@ -21,6 +21,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	bip39 "github.com/tyler-smith/go-bip39"
 )
 
 //go:embed templates/*.html
@@ -38,12 +40,13 @@ type Component struct{ Name, Release string }
 type World struct{ Name, Description, Rail, Symbol, Error string }
 
 // OldKernel is a kernel this machine holds and Juice can no longer serve:
-// its name, the release that served it, the UI release to go back to, whether it
-// holds money on a chain, and where it is kept once retired.
+// its name, the release that served it, the UI release to go back to, its
+// world, whether that world's money is on a chain, whether its recovery phrase
+// gives a new kernel its address, and where it is kept once retired.
 type OldKernel struct {
-	Handle, Version, Release string
-	Chain                    bool
-	Kept                     string
+	Handle, Version, Release, World string
+	Chain, Phrase                   bool
+	Kept                            string
 }
 
 // Kernel is this machine's installation as the installer drives it.
@@ -212,7 +215,7 @@ func (in *Installer) choose(ctx context.Context) ([]Step, error) {
 	if isOld {
 		// It is retired, if it is, before anything is downloaded; one that
 		// answers is refused there.
-		in.old, in.handle, answers = old, old.Handle, false
+		in.old, in.handle, in.world, answers = old, old.Handle, old.World, false
 		seq = append(seq, in.oldPage())
 	}
 	if dl, ok := in.download(answers && !ours, creating); ok {
@@ -245,12 +248,20 @@ func (in *Installer) download(followed, creating bool) (Step, bool) {
 }
 
 // oldPage asks before a kernel Juice can no longer serve is retired; the rest of
-// the sequence makes a new one.
+// the sequence makes a new one, from the old kernel's recovery phrase when the
+// operator types it, so that it keeps the old kernel's address.
 func (in *Installer) oldPage() Step {
-	return Step{ID: "old", Title: "Old kernel", Installer: true, Page: true, Submit: answer(func(url.Values) string {
+	return Step{ID: "old", Title: "Old kernel", Installer: true, Page: true, Submit: answer(func(f url.Values) string {
+		phrase := strings.Join(strings.Fields(f.Get("phrase")), " ")
+		if phrase != "" && !bip39.IsMnemonicValid(phrase) {
+			return "That is not a recovery phrase."
+		}
 		if err := in.o.Kernel.Retire(); err != nil {
 			in.old, _ = in.o.Kernel.Old() // a part of it may have moved
 			return err.Error()
+		}
+		if phrase != "" {
+			in.phrase = phrase
 		}
 		return ""
 	})}

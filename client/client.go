@@ -21,6 +21,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -29,6 +30,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"golang.org/x/mod/semver"
 )
 
 // Client is the typed Juice kernel HTTP client. Every method takes the access
@@ -57,7 +60,7 @@ func (c *Client) BaseURL() string { return c.baseURL }
 
 // Party is how a reply names a party or an action (kernel R3a): Address as this
 // kernel writes it, for a person to read and to type back; Principal,
-// user_id@kernel_key[/name] or a kernel's key, which names it on every kernel
+// user_id@kernel_address[/name] or a kernel's address, which names it on every kernel
 // and survives a rename, for a program to keep and compare; and Nickname, the
 // name a kernel this one has given no petname calls itself, a claim shown
 // marked ~ (Label). A request takes an address or a principal as a plain string.
@@ -70,9 +73,9 @@ type Party struct {
 // String is the party's address, so a page that prints a party prints it.
 func (p Party) String() string { return p.Address }
 
-// Keyed is the party's address with its kernel spelled by key, as its
+// Keyed is the party's address with its kernel spelled by its address, as its
 // principal names it: the spelling no petname changes, by which a program may
-// keep a party it addresses by handle. A kernel party is its key.
+// keep a party it addresses by handle. A kernel party is its address.
 func (p Party) Keyed() string {
 	handle, rest, ok := strings.Cut(p.Address, "@")
 	_, key, named := strings.Cut(p.Principal, "@")
@@ -91,7 +94,7 @@ func (p Party) Keyed() string {
 
 // Label is the party as a person reads it (ui-grammar "Names"): its kernel by
 // the petname bound here, else by the name it calls itself, marked ~ as a
-// claim, else by its key shortened. bob@beta, bob@~alpha, bob@g0b6iv3OqL…WhD0,
+// claim, else by its address shortened. bob@beta, bob@~alpha, bob@0x7099…79c8,
 // bob@beta/mail/send. It is the join of Parts.
 func (p Party) Label() string {
 	handle, kernel, path := p.Parts()
@@ -105,20 +108,20 @@ func (p Party) Parts() (handle, kernel, path string) {
 	if p.claimed(kernel) {
 		return handle, "~" + p.Nickname, path
 	}
-	return handle, ShortKey(kernel), path
+	return handle, ShortChainAddress(kernel), path
 }
 
-// Shown is Label followed by the key a nickname stands in for, shortened: the
-// form a question or a sentence names a party by, since the claim alone
-// decides nothing. bob@~alpha g0b6iv3OqL…WhD0.
+// Shown is Label followed by the address a nickname stands in for, shortened:
+// the form a question or a sentence names a party by, since the claim alone
+// decides nothing. bob@~alpha 0x7099…79c8.
 func (p Party) Shown() string {
 	if key := p.Claim(); key != "" {
-		return p.Label() + " " + ShortKey(key)
+		return p.Label() + " " + ShortChainAddress(key)
 	}
 	return p.Label()
 }
 
-// Claim is the key of the kernel Label names by its nickname, "" when Label
+// Claim is the address of the kernel Label names by its nickname, "" when Label
 // names it otherwise.
 func (p Party) Claim() string {
 	if _, kernel, _ := splitAddress(p.Address); p.claimed(kernel) {
@@ -138,7 +141,7 @@ func (p Party) Owner() Party {
 }
 
 // Kernel is the party's kernel as a party: beta of bob@beta, its principal the
-// key, its nickname carried over.
+// address, its nickname carried over.
 func (p Party) Kernel() Party {
 	_, kernel, _ := splitAddress(p.Address)
 	key := p.Principal
@@ -183,9 +186,9 @@ func joinAddress(handle, kernel, path string) string {
 	return kernel
 }
 
-// claimed reports that the party's kernel is written by its key, so no petname
+// claimed reports that the party's kernel is written by its address, so no petname
 // names it here, and that it calls itself something.
-func (p Party) claimed(kernel string) bool { return p.Nickname != "" && IsKey(kernel) }
+func (p Party) claimed(kernel string) bool { return p.Nickname != "" && IsChainAddress(kernel) }
 
 // Tokens is an access/refresh token pair. Stored server-side only (R1.2).
 type Tokens struct {
@@ -573,48 +576,63 @@ type ImportNotice struct {
 // Health is GET /health (open): the identity banner a client pins before it
 // trusts a server (API C13). Beyond naming the kernel it fixes the money unit —
 // Decimals is the world's base-unit scale and Symbol what that money is called,
-// "credits" or "USDC" — and, on a world whose money has addresses,
-// BlockchainAddress is where this kernel is paid and Token the contract that
-// money is. Handle is the kernel's own name: the kernel segment of every local
-// address.
+// "credits" or "USDC". BlockchainAddress is the kernel's one global name and
+// where it is paid; Token is the contract its money is, "" on a world whose
+// money has no addresses. Handle is the kernel's own name: the kernel segment
+// of every local address. Version is the build the kernel runs.
 type Health struct {
 	Status             string `json:"status"`
 	Handle             string `json:"handle"`
-	PublicKey          string `json:"public_key"`
 	Network            string `json:"network"`
 	NetworkFingerprint string `json:"network_fingerprint"`
 	Decimals           int    `json:"decimals"`
 	Symbol             string `json:"symbol"`
 	Token              string `json:"token"`
 	BlockchainAddress  string `json:"blockchain_address"`
+	Version            string `json:"version"`
 }
 
-// KeyLen is the length of a kernel's public key: 33 bytes, base64url-encoded.
-const KeyLen = 44
+// ByAddress is the first kernel release that names a kernel by its address.
+// This UI follows no kernel older: one may send an address, as a v0.22 kernel
+// on a chain does, under identities and fields of its own.
+const ByAddress = "v0.23.0"
 
-// IsKey reports that a kernel's name is its key rather than a petname or a
-// handle: the three name classes are disjoint by shape (kernel §D15).
-func IsKey(name string) bool { return len(name) == KeyLen }
+// Current reports a kernel this UI follows: named by its address, of a release
+// at least ByAddress. A build of a commit after a release is older than that
+// release, as the installer compares them.
+func (h Health) Current() bool {
+	return IsChainAddress(h.BlockchainAddress) && semver.Compare(h.Version, ByAddress) >= 0
+}
 
-// ShortKey abbreviates a kernel's public key for display. A key is the
-// canonical global name and unreadable in full, so it shows head…tail: both
-// ends carry distinguishing signal, and the result is still the value to
-// eyeball against the original (no hashing). This is the single definition, so
-// one kernel abbreviates identically everywhere it is named — an error
-// sentence, the header, a card. Anything that is not key-shaped (IsKey) —
-// a petname, a handle — passes unchanged, so any kernel name may be given.
-func ShortKey(key string) string {
-	if !IsKey(key) {
-		return key
+// IsChainAddress reports a blockchain address, 0x and 40 hex digits in either
+// case: what a kernel is named by where no petname or handle names it, and
+// what money is paid at. The kernel's name classes are disjoint by shape
+// (kernel §D15).
+func IsChainAddress(s string) bool {
+	if len(s) != 42 || !strings.HasPrefix(s, "0x") {
+		return false
 	}
-	return key[:10] + "…" + key[len(key)-4:]
+	_, err := hex.DecodeString(s[2:])
+	return err == nil
+}
+
+// ShortChainAddress abbreviates an address as wallets do, 0x7099…79c8: enough
+// to match by eye, the whole value kept in a title and a copy control. This is
+// the single definition, so one kernel or wallet abbreviates identically
+// everywhere it is named — an error sentence, the header, a card. Anything
+// that is not an address — a petname, a handle — passes unchanged.
+func ShortChainAddress(a string) string {
+	if !IsChainAddress(a) {
+		return a
+	}
+	return a[:6] + "…" + a[38:]
 }
 
 // ShortAddress is an address, handle@kernel[/path] or a kernel alone, with its
-// kernel shown as ShortKey shows it.
+// kernel shown as ShortChainAddress shows it.
 func ShortAddress(a string) string {
 	handle, kernel, path := splitAddress(a)
-	return joinAddress(handle, ShortKey(kernel), path)
+	return joinAddress(handle, ShortChainAddress(kernel), path)
 }
 
 // ---- core request helper ----

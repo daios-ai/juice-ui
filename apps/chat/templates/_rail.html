@@ -73,7 +73,7 @@
 
 {{/* _copy_item — a menu's Copy address, for a row naming a kernel no petname
      names here (ui-grammar "Naming"): the row is a button or a link, which
-     holds no copy control of its own. Input: the address by key, or "". */}}
+     holds no copy control of its own. Input: the address with its kernel spelled by address, or "". */}}
 {{define "_copy_item"}}{{with .}}<div class="menu-divider"></div><button type="button" class="menu-item" role="menuitem" data-copy="{{.}}">Copy address</button>{{end}}{{end}}
 
 {{/* _new_room — the New room dialog; the name is optional, a blank one the

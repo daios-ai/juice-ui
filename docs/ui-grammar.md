@@ -352,7 +352,7 @@ The `page-head` carries **no commands** — just the title. A command
 lives **inline, with the content it acts on**. An opener that **adds** something
 is a single `.btn`: **New action** (the plus icon and the words) beside "Your
 actions", `+ record a payment`
-in the users section, `+ inspect a kernel by key`; none float, none are colored.
+in the users section, `+ inspect a kernel by address`; none float, none are colored.
 **An action is a button.** A link goes somewhere to read: a record's id or title,
 an address, a crumb, the pager, a sentence's next step (`View the receipt →`).
 Anything else a person acts on is a `.btn`, or a `.btn-icon` when it has no words,
@@ -650,7 +650,7 @@ links to its entity's page where one exists for every viewer:
 | path | the action's page, `/actions?ref=<keyed address>` (`actionHref`) |
 | kernel alone | nothing: its only page, Inspect, is the superuser's, and the renderer is every viewer's |
 
-A URL carries the address with its kernel spelled by key (`client.Party.Keyed`):
+A URL carries the address with its kernel spelled by its blockchain address (`client.Party.Keyed`):
 a petname is display-only. A party with no principal is spelled as another
 kernel wrote it — a room member the viewer's kernel could not name — whose
 petname may name another kernel here, so it links nowhere. Then the key a nickname stands in for, muted, and a
@@ -690,9 +690,9 @@ on why. An address naming nothing reads "That action could not be found."
 text, no route by id, a name inside a link `plain`, the chain-address partial
 (`_addr`) never given a party.
 
-When the kernel segment is a **raw public key** it is cut short by
-`client.ShortKey`, the whole address in the `title`. A bound petname is not
-key-shaped and renders whole. A key MUST never be a card title —
+When the kernel segment is a **raw address** it is cut short by
+`client.ShortChainAddress`, the whole address in the `title`. A bound petname is not
+address-shaped and renders whole. An address MUST never be a card title —
 the action's title is.
 
 Wherever an action is presented as a thing — a card, the action page's `<h1>`,
@@ -784,30 +784,32 @@ through `_figures` (§5.6, `kernelFigures`, each figure with its note), then a
 **counterparties**, then the **known network**, each class in the kernel's
 order, paged and never polled. A class is a neutral `.pill` beside its name —
 `this kernel`, `party`; a known kernel carries no mark. There is **no
-subscribe/unsubscribe verb**; the one opener is **inspect a kernel by key**,
+subscribe/unsubscribe verb**; the one opener is **inspect a kernel by address**,
 beside the Show/Hide-suspended toggle.
 
-A peer's row is `.rowable` and opens its page (`/admin/peers/{key}`), where it
+A peer's row is `.rowable` and opens its page (`/admin/peers/{address}`), where it
 is named and suspended (suspension freezes the kernel row, so every kernel's
 page offers it); a suspended
 kernel says so by its `suspended` danger pill, never faded. Its columns are
-**Key** (the key's one spelling with its copy, on every row, this kernel's
-too, so an operator hands on their own; empty where the name already is the
-key), Actions (the size of its catalog) and Seen (`last_seen`, relative,
+**Address** (the address's one spelling with its copy, on every row, this
+kernel's too, so an operator hands on their own; empty where the name already
+is the address), Actions (the size of its catalog) and Seen (`last_seen`, relative,
 `never` until an exchange has succeeded): catalog freshness, never a verdict
 on whether it is up; its about and its contact are its page's. This kernel's
-row states its key alone; it is titled with its own handle and links nowhere,
+row states its address alone, which is also where it is paid; it is titled with its own handle and links nowhere,
 because it is this page. A named row carries **no verb**, as a result row
 carries none; a row no petname names carries the one verb, `Name` — the same
 `.btn` as on the kernel's page — in its commands cell, linking into its page
 with the rename modal open:
 the verb appears exactly where the gap it fills is visible.
 
-**The key has one spelling**: `client.ShortKey` (the first 10 characters, `…`,
-the last 4; the whole key in `title`), wherever a key is named, alone or in an
-address. A row whose label is its key has that spelling as its name, with
-its copy; any other row has it in its Key column, with its copy. `truncate`
-never touches a key.
+**An address has one spelling**: `client.ShortChainAddress` (`0x` and the
+first 4 hex digits, `…`, the last 4, as wallets show it: `0x7099…79c8`; the
+whole address in `title`), wherever a kernel's or a wallet's address is named,
+alone or as the kernel of a Juice address (`client.ShortAddress`). A row whose
+label is its address has that spelling as its name, with its copy; any other
+row has it in its Address column, with its copy. `truncate` never touches an
+address.
 
 **A party has one rendering**, `_name` (§5.7), wherever a user, a kernel or an
 action's owner is named: its label (`client.Party.Label`, below), the whole
@@ -826,24 +828,24 @@ classes render differently because they are trusted differently:
 
 | class | what it is | renders |
 |---|---|---|
-| **key** | global, self-certifying, unreadable | truncated (`esKD_l0c…`), full value in `title`; the only thing URLs and forms key on |
+| **address** | global, self-certifying, unreadable | truncated (`0x7099…79c8`), full value in `title`; the only thing URLs and forms key on |
 | **nickname** | the kernel's claim about itself; never resolves | counterparty content (§6): inert, never linked, shown as the claim it is, marked `~` |
 | **petname** | bound here, unique here, resolves | whole, in the provenance face |
 
 **The label** is one rule: a kernel with a petname is shown by it alone
-(`bob@beta`); one without, by its nickname marked `~` (`bob@~alpha`), its key
-beside it where there is room; one with neither, by its key (`bob@g0b6iv3OqL…WhD0`).
+(`bob@beta`); one without, by its nickname marked `~` (`bob@~alpha`), its address
+beside it where there is room; one with neither, by its address (`bob@0x7099…79c8`).
 `~` is the one mark of a claim. A named kernel's nickname is shown nowhere. A
 decision on an unnamed kernel (Name, Suspend, Block, Disconnect) names its
-key. A nickname is never accepted as input; only a petname or a key resolves,
+address. A nickname is never accepted as input; only a petname or an address resolves,
 and the nickname's one use is to prefill Name. The
-**one** rename modal (§5.8) lives on the kernel's page, keyed on the public key
+**one** rename modal (§5.8) lives on the kernel's page, keyed on the address
 — an unbound kernel has no name to key on, and advertised names collide. Its
 field opens prefilled by the kernel's auto-bind preference: the petname when
-bound, else the nickname or `k-<key8>`, suffixed `2`, `3`, … past every name
+bound, else the nickname or `k-` and the address's first eight hex digits, suffixed `2`, `3`, … past every name
 held here (requirements §6.6).
 
-**Inspect** (`/admin/peers/{key}`) opens with the row's header in a
+**Inspect** (`/admin/peers/{address}`) opens with the row's header in a
 `.page-head` — name with its marks, key, `about` — then one `.card.stack`
 holding the polled `kv` of labelled, present facts (Status; Version without
 the agent prefix; Catalog, the roster's count; Self-reported; Known since, a
@@ -874,7 +876,7 @@ posting the peer's key and the ticket id. Recording a payment moves real money.
 **Rename** is one modal per namespace. A user has no page of its own and is
 renamed from its row on Admin (`/admin?form=admin-rename&address={address}`): a
 `.btn` opener before Suspend, one field taking the new address. A kernel is
-named on its inspect page the same way, keyed on its public key. The two are
+named on its inspect page the same way, keyed on its address. The two are
 separate because the kernel's two routes are.
 
 A counterparty carries **no money at all**: a peer account is identity and
@@ -899,14 +901,16 @@ obligations above.
   `juice-logo.svg`.
 - **The copy control** is the `_copy` partial, built with `copyOf <what> <value>`:
   a `.btn-icon.inline` whose `data-copy` carries the **whole**
-  value — a key, a hash, an address, the recovery phrase — beside the
+  value — a hash, an address, the recovery phrase — beside the
   truncated or prose rendering of it, labelled `Copy <what>`. It is the one
   way a page yields a value the commands take whole (requirements.md §7);
   "Copied" is announced through the live region, never on the button. A
   record id gets none, since the kernel resolves a prefix.
-- **A chain address** — a wallet's, a vault's, a token contract — renders as
+- **A chain address** — a wallet's, a kernel's, a token contract — renders as
   wallets show it, `0x7099…79c8`, through the one `_addr` partial (the
-  `shortAddr` helper, the whole value in its `title` and its copy control);
+  `shortAddr` helper, `client.ShortAddress`, the whole value in its `title`
+  and its copy control), and a kernel's address named as a party through
+  `_name`, by the same one spelling;
   `TestChainAddressesRenderShort` fails on one rendered whole. The whole text
   appears only where it is the point: the registration message to sign.
 

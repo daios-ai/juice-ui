@@ -20,9 +20,14 @@
   <div class="install-content stack">
     {{if .Error}}{{template "_error" .Error}}{{end}}
     {{if eq .Step "old"}}
-    <p>This Juice cannot serve the kernel{{with .Old.Handle}} <span class="mono">{{.}}</span>{{end}}, made by Juice {{.Old.Version}}. Kernels changed their identity in 0.22, and the network has moved on.</p>
+    <p>This Juice cannot serve the kernel{{with .Old.Handle}} <span class="mono">{{.}}</span>{{end}}, last served by kernel {{.Old.Version}}. Kernels are now named by their blockchain address, and the network has moved on.</p>
     <p>A new kernel will be created. The old kernel, with its accounts, balances, agents and rooms, is kept in <span class="mono">{{.Old.Kept}}</span> and is not carried over.</p>
-    {{if .Old.Chain}}<p class="banner banner-error"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#alert"/></svg> <span>The money it holds on the chain stays at its old address, whose key is kept in that folder.</span></p>{{end}}
+    {{if .Old.Phrase}}<div class="field">
+      <label for="i-phrase">Recovery phrase of the old kernel</label>
+      <p class="help">With it the new kernel has the old one's address{{if .Old.Chain}}, and the coins at it on the chain{{end}}. Leave empty for a new address.</p>
+      <textarea id="i-phrase" name="phrase" class="mono" rows="1" autocomplete="off" spellcheck="false"></textarea>
+    </div>
+    {{else if .Old.Chain}}<p class="banner banner-error"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#alert"/></svg> <span>The money it holds on the chain stays at its old address, whose key is kept in that folder.</span></p>{{end}}
     {{with .Old.Release}}<p>To keep the old kernel instead, stop Juice and run:</p>
     {{$cmd := printf "curl -fsSL https://raw.githubusercontent.com/daios-ai/juice-ui/main/install.sh | sh -s -- %s" .}}<pre class="json">{{$cmd}}</pre>
     <div class="row compact">{{template "_copy" (copyOf "command" $cmd)}}</div>{{end}}

@@ -473,13 +473,13 @@ func TestPeerRefusedNamesThePeerExactlyOnce(t *testing.T) {
 	// A key-shaped name is abbreviated before it reaches the card.
 	fk := &fakeKernel{
 		runStatus: http.StatusForbidden,
-		runBody:   `{"code":"unauthorized","error":"refused","meta":{"peer":"1MutJi6KXZIWlxJMiIKsAu4gR6-R4ACoEJwP7sNT_mq4"}}`,
+		runBody:   `{"code":"unauthorized","error":"refused","meta":{"peer":"0xa2e699913d2e53c3cea5b805ea5af1cdef96baef"}}`,
 	}
 	ck, stopk := fk.start(t)
 	defer stopk()
 	outk, _ := NewCaller(ck).Run(context.Background(), "tok", "vendor@k/fast", nil, "")
-	if outk.Peer != "1MutJi6KXZ…_mq4" {
-		t.Errorf("Peer = %q, want the abbreviated key", outk.Peer)
+	if outk.Peer != "0xa2e6…baef" {
+		t.Errorf("Peer = %q, want the abbreviated address", outk.Peer)
 	}
 }
 

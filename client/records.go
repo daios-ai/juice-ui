@@ -16,11 +16,11 @@ import (
 // one file per login, each read and written under an exclusive lock on it.
 
 // RecordKernel records the kernel c talks to in dir/config.json, by the rule of
-// `juice kernel add` (ecosystem-standard §4): a kernel is its key. No record
-// under the name it calls itself: add one. A record with that key: the same
-// kernel, so its facts are refreshed from /health — it may have moved, and an
-// older client may have stored fewer of them. A record with another key:
-// refused. `current` and every other field are kept. The read-modify-write holds
+// `juice kernel add` (ecosystem-standard §4): a kernel is its address. No
+// record under the name it calls itself: add one. A record with that address,
+// or with none, as a kernel before v0.23 wrote it: the same kernel, so its
+// facts are refreshed from /health — it may have moved, and an older client
+// may have stored fewer of them. A record with another address: refused. `current` and every other field are kept. The read-modify-write holds
 // the installation's config.json.lock, as the command line does, and the file is
 // written by temp file and rename.
 func (c *Client) RecordKernel(ctx context.Context, dir string) error {
@@ -54,10 +54,10 @@ func (c *Client) RecordKernel(ctx context.Context, dir string) error {
 			return err
 		}
 	}
-	if rec := kernels[h.Handle]; rec != nil && rec["public_key"] != h.PublicKey {
-		return fmt.Errorf("kernel %s is recorded with another key", h.Handle)
+	if rec := kernels[h.Handle]; rec != nil && rec["blockchain_address"] != nil && rec["blockchain_address"] != h.BlockchainAddress {
+		return fmt.Errorf("kernel %s is recorded with another address", h.Handle)
 	}
-	kernels[h.Handle] = map[string]any{"endpoint": c.BaseURL(), "public_key": h.PublicKey,
+	kernels[h.Handle] = map[string]any{"endpoint": c.BaseURL(), "blockchain_address": h.BlockchainAddress,
 		"world_fingerprint": h.NetworkFingerprint, "network": h.Network, "decimals": h.Decimals, "symbol": h.Symbol}
 	cfg["kernels"], _ = json.Marshal(kernels)
 	b, _ := json.MarshalIndent(cfg, "", "  ")

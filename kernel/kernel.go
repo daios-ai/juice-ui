@@ -32,6 +32,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/daios-ai/juice-ui/client"
 	"github.com/daios-ai/juice-ui/supervisor"
 	"golang.org/x/mod/semver"
 )
@@ -55,7 +56,7 @@ type Component struct {
 // verified against, in the order the gate installs them: the kernel first,
 // since nothing is created or served without it.
 var Components = []Component{
-	{Repo: "daios-ai/juice", Name: "juice", Title: "kernel", Release: "v0.22.1", Programs: []string{"juice"}, Setup: []string{"juice", "kernel", "setup"}},
+	{Repo: "daios-ai/juice", Name: "juice", Title: "kernel", Release: "v0.23.0", Programs: []string{"juice"}, Setup: []string{"juice", "kernel", "setup"}},
 	{Repo: "daios-ai/juice-agent", Name: "juice-agent", Title: "agent", Release: "v0.11.1", Env: "JUICE_AGENT_BIN", Programs: []string{"juice-agent"}, Setup: []string{"juice-agent", "setup"}},
 }
 
@@ -216,7 +217,8 @@ func (i *Installation) bin(name string) string {
 	return ""
 }
 
-// home is this installation's kernel home: the directory under kernels/ whose
+// home is this installation's kernel home in root, its home or the folder a
+// stopped retirement filled: the directory under kernels/ whose
 // config.json listens on loopback at the configured URL's port, its world being
 // the directory's name (ecosystem-standard §2). booted reports that a kernel
 // lives there — its database, juice.db, exists — which the kernel guarantees of
@@ -225,12 +227,12 @@ func (i *Installation) bin(name string) string {
 // the configuration is read, so a damaged config.json cannot hide a kernel: a
 // directory holding juice.db whose config.json is missing or unreadable is an
 // error, since the UI can neither tell which port it serves nor create beside it.
-func (i *Installation) home() (world string, booted bool, err error) {
+func (i *Installation) home(root string) (world string, booted bool, err error) {
 	port := i.URL.Port()
 	if port == "" {
 		port = "80"
 	}
-	dirs, err := kernelDirs(i.Home)
+	dirs, err := kernelDirs(root)
 	if err != nil {
 		return "", false, err
 	}
@@ -267,7 +269,8 @@ func exists(path string) bool {
 	return err == nil
 }
 
-// Serving reports whether a kernel answers /health at the configured URL.
+// Serving reports whether a kernel this UI follows (client.Health.Current)
+// answers /health at the configured URL.
 func (i *Installation) Serving(ctx context.Context) bool {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
@@ -280,10 +283,8 @@ func (i *Installation) Serving(ctx context.Context) bool {
 		return false
 	}
 	defer resp.Body.Close()
-	var h struct {
-		PublicKey string `json:"public_key"`
-	}
-	return resp.StatusCode == http.StatusOK && json.NewDecoder(resp.Body).Decode(&h) == nil && h.PublicKey != ""
+	var h client.Health
+	return resp.StatusCode == http.StatusOK && json.NewDecoder(resp.Body).Decode(&h) == nil && h.Current()
 }
 
 func (i *Installation) client() *http.Client {
@@ -462,8 +463,8 @@ func (i *Installation) Backup() error {
 	return os.Rename(next, done)
 }
 
-// oneKey is the first kernel release whose identity and payment address are one
-// key. It serves no kernel an earlier one made, and the network has moved to it.
+// oneKey is the first kernel release whose key comes from its recovery phrase,
+// so that the phrase gives a later kernel the same address.
 const oneKey = "v0.22.0"
 
 // OldKernel is a kernel this installation holds and Juice can no longer serve.
@@ -471,7 +472,9 @@ type OldKernel struct {
 	Handle  string // its name; "" when its configuration does not say
 	Version string // the kernel release that served it
 	Release string // the UI release that last served it; "" when none is recorded
-	Chain   bool   // it holds the key of an address on a chain
+	World   string // the world it serves
+	Chain   bool   // its world's money is on a chain
+	Phrase  bool   // its recovery phrase gives a new kernel its address
 	Kept    string // where Retire moves it
 }
 
@@ -481,8 +484,11 @@ type OldKernel struct {
 const partial = ".partial"
 
 // Old is the kernel Retire would move: one lives here and the kernel binary in
-// bin/, the one it was last served by, is older than oneKey, or a retirement
-// stopped before its end. A UI configured for a kernel elsewhere has none.
+// bin/, the one it was last served by, is older than client.ByAddress, or a
+// retirement stopped before its end. A UI configured for a kernel elsewhere has
+// none. Its world and name are those of this installation's kernel home, in
+// the home or in the folder a stopped retirement filled, whichever holds it,
+// and whether that world's money is on a chain its definition says, likewise.
 func (i *Installation) Old() (OldKernel, bool) {
 	if !i.Local() {
 		return OldKernel{}, false
@@ -496,7 +502,7 @@ func (i *Installation) Old() (OldKernel, bool) {
 	} else {
 		v := i.Version()
 		dirs, err := kernels(i.Home)
-		if err != nil || len(dirs) == 0 || v == "" || semver.Compare(v, oneKey) >= 0 {
+		if err != nil || len(dirs) == 0 || v == "" || semver.Compare(v, client.ByAddress) >= 0 {
 			return OldKernel{}, false
 		}
 		k.Version = strings.TrimPrefix(v, "v")
@@ -508,16 +514,24 @@ func (i *Installation) Old() (OldKernel, bool) {
 			k.Release = strings.TrimSpace(string(b))
 		}
 	}
+	k.Phrase = semver.Compare("v"+k.Version, oneKey) >= 0
 	for _, root := range roots {
-		dirs, _ := kernels(root)
-		for _, dir := range dirs {
+		if world, booted, _ := i.home(root); booted && k.World == "" {
+			k.World = world
 			var c struct {
 				Handle string `json:"kernel_handle"`
 			}
-			if b, err := os.ReadFile(filepath.Join(dir, "config.json")); err == nil && json.Unmarshal(b, &c) == nil && k.Handle == "" {
+			if b, err := os.ReadFile(filepath.Join(root, "kernels", world, "config.json")); err == nil && json.Unmarshal(b, &c) == nil {
 				k.Handle = c.Handle
 			}
-			k.Chain = k.Chain || exists(filepath.Join(dir, "rail.key"))
+		}
+	}
+	for _, root := range roots {
+		var w struct {
+			Rail string `json:"rail"`
+		}
+		if b, err := os.ReadFile(filepath.Join(root, "worlds", k.World+".json")); err == nil && json.Unmarshal(b, &w) == nil {
+			k.Chain = k.Chain || w.Rail == "evm"
 		}
 	}
 	return k, true
@@ -703,7 +717,7 @@ func (i *Installation) Create(world, handle, password, phrase string, extra map[
 	i.boot.Lock()
 	defer i.boot.Unlock()
 	dir := filepath.Join(i.Home, "kernels", world)
-	home, booted, err := i.home()
+	home, booted, err := i.home(i.Home)
 	switch {
 	case err != nil:
 		return err
@@ -850,7 +864,7 @@ func (i *Installation) Schema() []byte {
 // booted is the world of this installation's kernel, or an error when no
 // kernel lives here: only a booted home's configuration is read or changed.
 func (i *Installation) booted() (string, error) {
-	world, booted, err := i.home()
+	world, booted, err := i.home(i.Home)
 	if err == nil && !booted {
 		err = errors.New("no kernel lives here")
 	}
@@ -1011,7 +1025,7 @@ func (i *Installation) declare(world string, booted bool) (supervisor.Status, bo
 func (i *Installation) Booted() (world string, booted bool, err error) {
 	i.boot.Lock()
 	defer i.boot.Unlock()
-	return i.home()
+	return i.home(i.Home)
 }
 
 // kernelDirs are the directories under home/kernels/, none when it does not exist;
@@ -1130,7 +1144,7 @@ func orNone(v string) string {
 func (i *Installation) Start(ctx context.Context) error {
 	for {
 		i.boot.Lock()
-		world, booted, err := i.home()
+		world, booted, err := i.home(i.Home)
 		st, declared := i.declare(world, booted && err == nil)
 		serving := i.Serving(ctx) && (!declared || st.Running || st.Disabled)
 		i.boot.Unlock()

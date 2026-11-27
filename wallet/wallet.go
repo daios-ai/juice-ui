@@ -25,8 +25,8 @@ import (
 // Message is the text the kernel verifies a registration signature against
 // (EIP-191; kernel manual, measured on v0.16.0): four lines, no trailing
 // newline, the address exactly as sent in the request.
-func Message(kernelKey, userID, address string) string {
-	return "juice address registration\nkernel: " + kernelKey + "\nuser: " + userID + "\naddress: " + address
+func Message(kernel, userID, address string) string {
+	return "juice address registration\nkernel: " + kernel + "\nuser: " + userID + "\naddress: " + address
 }
 
 // chains bounds the search in ChainOf: the worlds the kernel ships, and anvil's
@@ -42,7 +42,7 @@ var chains = []struct {
 // recomputing it for a candidate is a proof. The struct's keys are already in
 // JCS order, and no value can hold a character JSON escapes.
 func ChainOf(h client.Health) (int64, bool) {
-	if h.BlockchainAddress == "" {
+	if h.Token == "" {
 		return 0, false
 	}
 	for _, c := range chains {

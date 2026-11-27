@@ -85,13 +85,13 @@ type Server struct {
 }
 
 // KernelIdentity is the kernel this UI is for: the /health banner, cached for a
-// TTL, held to the key the records name. It is built once at wiring and owns
+// TTL, held to the address the records name. It is built once at wiring and owns
 // that question for the whole process — the renderer asks it for the world's
 // money unit, the server for the kernel's identity — so neither has to be told
 // later what it is working with.
 type KernelIdentity struct {
 	client   *client.Client
-	recorded string // the kernel's public key as recorded; never changes
+	recorded string // the kernel's address as recorded; never changes
 	ttl      time.Duration
 	log      *slog.Logger
 
@@ -100,10 +100,10 @@ type KernelIdentity struct {
 	fetched time.Time
 }
 
-// NewKernelIdentity binds this UI to one kernel. recorded is its public key —
-// from the named kernel's record, or from AwaitKernel when a bare address was
-// given — and is fixed from here: an address that later answers with another key
-// is another kernel, not a change of mind.
+// NewKernelIdentity binds this UI to one kernel. recorded is its address —
+// from the named kernel's record, or from AwaitKernel when a bare URL or a
+// record without one was given — and is fixed from here: a URL that later
+// answers with another address is another kernel, not a change of mind.
 func NewKernelIdentity(c *client.Client, recorded string, ttl time.Duration, log *slog.Logger) *KernelIdentity {
 	if ttl <= 0 {
 		ttl = 30 * time.Second
@@ -114,9 +114,10 @@ func NewKernelIdentity(c *client.Client, recorded string, ttl time.Duration, log
 	return &KernelIdentity{client: c, recorded: recorded, ttl: ttl, log: log}
 }
 
-// AwaitKernel reads /health until the server answers or the timeout passes. It
-// is how a UI given a bare address learns which kernel that is, before anything
-// is keyed on it; a UI that names a kernel already knows and never calls this.
+// AwaitKernel reads /health until the server answers as a kernel this UI
+// follows (client.Health.Current) or the timeout passes. It is how a UI given a
+// bare address learns which kernel that is, before anything is keyed on it; a
+// UI that names a kernel already knows and never calls this.
 func AwaitKernel(c *client.Client, timeout time.Duration) (client.Health, error) {
 	deadline := time.Now().Add(timeout)
 	var last error
@@ -127,8 +128,8 @@ func AwaitKernel(c *client.Client, timeout time.Duration) (client.Health, error)
 		switch {
 		case err != nil:
 			last = err
-		case id.PublicKey == "":
-			last = fmt.Errorf("/health carries no public key")
+		case !id.Current():
+			last = fmt.Errorf("it is no kernel of %s or later, named by its address", client.ByAddress)
 		default:
 			return id, nil
 		}
@@ -139,10 +140,9 @@ func AwaitKernel(c *client.Client, timeout time.Duration) (client.Health, error)
 	}
 }
 
-// Pin records the kernel's public key when the UI was given a bare address and
-// has just learned it from /health. It takes effect once: a recorded key is
-// never replaced, so a server that later answers with another key is another
-// kernel.
+// Pin records the kernel's address when the UI was given none and has just
+// learned it from /health. It takes effect once: a recorded address is never
+// replaced, so a server that later answers with another is another kernel.
 func (k *KernelIdentity) Pin(key string) {
 	k.mu.Lock()
 	defer k.mu.Unlock()
@@ -167,12 +167,12 @@ func (k *KernelIdentity) Get(ctx context.Context) (client.Health, bool) {
 	if err != nil || hc.Handle == "" {
 		return id, id.Handle != "" // keep what we had; retry on a later render
 	}
-	if k.recorded != "" && hc.PublicKey != k.recorded {
+	if k.recorded != "" && hc.BlockchainAddress != k.recorded {
 		// The address answers, but not as the kernel our records name. That is
 		// not this kernel and nothing is trusted from it: no identity, no unit,
 		// no login. Logged, because it is the one thing an operator must know.
 		k.log.Warn("kernel identity mismatch: the server at this address is not the recorded kernel",
-			"recorded", client.ShortKey(k.recorded), "answered", client.ShortKey(hc.PublicKey))
+			"recorded", client.ShortChainAddress(k.recorded), "answered", client.ShortChainAddress(hc.BlockchainAddress))
 		return client.Health{}, false
 	}
 	k.mu.Lock()
@@ -215,11 +215,11 @@ func (k *KernelIdentity) Address(handle string) string {
 	return ""
 }
 
-// KeyAddress is Address with this kernel named by its public key, handle@<key>.
-// "" while the key is unknown.
+// KeyAddress is Address with this kernel named by its address,
+// handle@<address>. "" while the address is unknown.
 func (k *KernelIdentity) KeyAddress(handle string) string {
 	k.mu.Lock()
-	key := k.id.PublicKey
+	key := k.id.BlockchainAddress
 	k.mu.Unlock()
 	if key == "" {
 		return ""
@@ -320,7 +320,7 @@ func New(o Options) (http.Handler, error) {
 	}
 	if as.Adopted {
 		s.log.Warn("app state predates kernel keying; its apps are adopted by the current kernel and the file is rewritten keyed",
-			"kernel", client.ShortKey(o.Identity.recorded))
+			"kernel", client.ShortChainAddress(o.Identity.recorded))
 	}
 	s.appStore = as
 	s.viewers = newViewers(as)
@@ -438,7 +438,7 @@ func New(o Options) (http.Handler, error) {
 	}
 	mux.HandleFunc("GET /admin/peers", s.requireSuperuser(s.getAdminPeers))
 	// The literal /inspect pattern is more specific than /{key}, so it wins; a
-	// peer key is longer (client.KeyLen) and can never collide with it.
+	// peer address is 0x and 40 hex digits and can never collide with it.
 	mux.HandleFunc("GET /admin/peers/inspect", s.requireSuperuser(s.getAdminInspectByKey))
 	mux.HandleFunc("GET /admin/peers/{key}", s.requireSuperuser(s.getAdminInspect))
 	mux.HandleFunc("POST /admin/peers/suspend", s.requireSuperuser(s.postAdminPeerSuspend))
@@ -742,7 +742,7 @@ func (s *Server) requireAuth(h http.HandlerFunc) http.HandlerFunc { return s.gat
 // asked for it, since the session it ends is gone either way.
 func (s *Server) endSession(ctx context.Context) {
 	id := s.kernelIdentity(ctx)
-	issuer := id.PublicKey != "" && s.sessions.Pin(ctx) == session.Pin{PublicKey: id.PublicKey, NetworkFingerprint: id.NetworkFingerprint}
+	issuer := id.BlockchainAddress != "" && s.sessions.Pin(ctx) == session.Pin{Kernel: id.BlockchainAddress, NetworkFingerprint: id.NetworkFingerprint}
 	pairs, _ := s.sessions.Logout(ctx)
 	for _, toks := range pairs {
 		if toks.RefreshToken != "" && issuer {
@@ -811,11 +811,11 @@ func forgetMe(r *http.Request) {
 // the session. Only a positive disagreement logs out.
 func (s *Server) kernelChanged(w http.ResponseWriter, r *http.Request) bool {
 	id := s.kernelIdentity(r.Context())
-	if id.PublicKey == "" {
+	if id.BlockchainAddress == "" {
 		return false
 	}
 	pin := s.sessions.Pin(r.Context())
-	if pin.PublicKey == id.PublicKey && pin.NetworkFingerprint == id.NetworkFingerprint {
+	if pin.Kernel == id.BlockchainAddress && pin.NetworkFingerprint == id.NetworkFingerprint {
 		return false
 	}
 	s.endSession(r.Context())
@@ -964,28 +964,28 @@ func (s *Server) page(r *http.Request, title string, data any) Page {
 		Path:  r.URL.Path,
 		// ?drawer=open is the no-JS route into a narrow screen's drawer,
 		// stamped on <html> as the script would set it (§6.1).
-		DrawerOpen:   r.URL.Query().Get("drawer") == "open",
-		Theme:        themeFromRequest(r),
-		Sidebar:      sidebarFromRequest(r),
-		Commands:     cmds,
-		Rail:         rail,
-		Me:           s.sessions.Address(r.Context()),
-		Accounts:     s.sessions.Accounts(r.Context()),
-		KernelHandle: kernelID.Handle,
-		KernelKey:    kernelID.PublicKey,
-		KernelNet:    kernelID.Network,
-		KernelName:   s.kernelName,
-		IsSuperuser:  super,
-		Themes:       ThemeList(),
-		CSRFField:    s.csrfField(r),
-		CSRFToken:    csrf.Token(r),
-		Launcher:     template.JS(commandsJSON(cmds)),
-		Flash:        flash,
-		FlashKind:    flashKind,
-		BadgeSecs:    int(s.badgeTTL / time.Second),
-		Update:       s.updateView(r),
-		SignIn:       signIn,
-		Data:         data,
+		DrawerOpen:    r.URL.Query().Get("drawer") == "open",
+		Theme:         themeFromRequest(r),
+		Sidebar:       sidebarFromRequest(r),
+		Commands:      cmds,
+		Rail:          rail,
+		Me:            s.sessions.Address(r.Context()),
+		Accounts:      s.sessions.Accounts(r.Context()),
+		KernelHandle:  kernelID.Handle,
+		KernelAddress: kernelID.BlockchainAddress,
+		KernelNet:     kernelID.Network,
+		KernelName:    s.kernelName,
+		IsSuperuser:   super,
+		Themes:        ThemeList(),
+		CSRFField:     s.csrfField(r),
+		CSRFToken:     csrf.Token(r),
+		Launcher:      template.JS(commandsJSON(cmds)),
+		Flash:         flash,
+		FlashKind:     flashKind,
+		BadgeSecs:     int(s.badgeTTL / time.Second),
+		Update:        s.updateView(r),
+		SignIn:        signIn,
+		Data:          data,
 	}
 }
 

@@ -28,7 +28,7 @@ func TestMessageIsTheKernelsFourLines(t *testing.T) {
 var (
 	anvil   = client.Health{Network: "anvil", Token: "0x5fbdb2315678afecb367f032d93f642f64180aa3", BlockchainAddress: "0xd1572fc3bd9ebbab2dfd173504c6e7f82bad21ca", NetworkFingerprint: "7d16b1469f57f12eb983417f64de442bdb7b06909e26a65daa8bcd311bb80d9b"}
 	polygon = client.Health{Network: "polygon", Token: "0xc2132d05d31c914a87c6611c10748aeb04b58e8f", BlockchainAddress: "0xvault", NetworkFingerprint: "745bdb1ebcadda5d669bdac5638ba13f1102674f2decf89f137b5ba08b1b8666"}
-	play    = client.Health{Network: "play", NetworkFingerprint: "baed18ae3f0c2b63f04f593d113a8af947eea60410d2748771d4ad38df9ecf96"}
+	play    = client.Health{Network: "play", BlockchainAddress: "0x9858effd232b4033e47d90003d41ec34ecaeda94", NetworkFingerprint: "baed18ae3f0c2b63f04f593d113a8af947eea60410d2748771d4ad38df9ecf96"}
 )
 
 func TestChainOfProvesTheChainByTheFingerprint(t *testing.T) {
@@ -39,7 +39,7 @@ func TestChainOfProvesTheChainByTheFingerprint(t *testing.T) {
 		t.Errorf("polygon = %d %v", id, ok)
 	}
 	if _, ok := ChainOf(play); ok {
-		t.Error("a world without addresses has no chain")
+		t.Error("a world without a token has no chain, though its kernel has an address")
 	}
 	forged := anvil
 	forged.NetworkFingerprint = "8" + anvil.NetworkFingerprint[1:]
@@ -72,7 +72,7 @@ func TestFundTxNeedsAProvenChainAndARegisteredAddress(t *testing.T) {
 		h  client.Health
 		me client.User
 		n  int64
-	}{"manual world": {play, me, 1}, "unproven chain": {client.Health{BlockchainAddress: "0xv"}, me, 1}, "unregistered": {anvil, client.User{}, 1}, "zero": {anvil, me, 0}} {
+	}{"manual world": {play, me, 1}, "unproven chain": {client.Health{BlockchainAddress: "0xv", Token: "0xt"}, me, 1}, "unregistered": {anvil, client.User{}, 1}, "zero": {anvil, me, 0}} {
 		if _, err := FundTx(c.h, c.me, c.n); err != ErrNoFunding {
 			t.Errorf("%s: err = %v", name, err)
 		}

@@ -1,7 +1,26 @@
 # Juice Web UI Requirements
 
-Version: 0.77.1
+Version: 0.78.0
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.78.0.** The kernel pin is v0.23.0, which names a kernel
+> by one thing, its blockchain address, `0x` and 40 hex digits: in `/health`,
+> in every principal, peer row, peer route, evidence row and record, and in the
+> wallet's registration message, where a kernel's public key stood. Every kernel
+> has an address, a play kernel too, so a world's money has addresses where the
+> kernel names a token. One rule tells an address from a name and one shortens
+> it, `0x7099…79c8`, for a kernel and a wallet alike. The network page's Key
+> column is its Address column, and the line "paid at" is gone, since where a
+> kernel is paid is its name. A kernel made before v0.23.0 cannot be served:
+> the installer's first page says it was last served by kernel `<version>`,
+> and for one made since v0.22.0 asks, optionally, for its recovery phrase,
+> from which the new kernel is made with the old one's address, and on a chain
+> the coins at it; the World page opens on the old kernel's world, that of
+> the kernel home on the configured port. A kernel record written before
+> v0.23.0 holds no address: the old kernel this installation replaces is asked
+> for its own, as under a bare URL, and any other is registered again. A kernel
+> whose `/health` reports a release before v0.23.0 is not followed, though a
+> v0.22 kernel on a chain sends an address (§1, §5, §6.5, §6.6).
 
 > **What changed in 0.77.1.** An account that holds no money, available and
 > parked both zero, is empty, and an empty account's app is its wallet: it
@@ -1374,11 +1393,22 @@ the job in hand ("Start the kernel", "Wait for `<url>`") with the kernel's own
 words, polled until it answers. Nothing on that card names an installation.
 
 * **Old kernel** comes first, and only when a kernel lives here and the kernel
-  binary that serves it is older than v0.22.0: no later kernel serves it. The
-  page names it and its release, says that a new kernel will be created and where
-  the old one is kept, warns, where it holds an address on a chain, that the money
-  stays there, and gives the command that installs the UI release it last ran
-  under. Nothing is downloaded or moved before its button, **Create a new
+  binary that serves it is older than v0.23.0: no later kernel serves it. The
+  page names it and the kernel release that last served it, says that a new
+  kernel will be created and where the old one is kept, and gives the command
+  that installs the UI release it last ran under. For a kernel made since
+  v0.22.0, whose key derives from its recovery phrase, it offers one optional
+  field, **Recovery phrase of the old kernel**: with it the new kernel has the
+  old one's address and, where its world's money is on a chain, the coins at
+  it; empty, the new kernel has a new address. A phrase that fails its BIP-39
+  checksum is refused before anything is moved; one that passes is the phrase
+  the new kernel is made with and the one the Recovery phrase page shows. For
+  an older kernel, whose phrase restores nothing, the page warns instead, where
+  its world's money is on a chain, that the money stays at its old address.
+  Whether a world's money is on a chain is read from its definition
+  (`worlds/<world>.json`, `rail: evm`). The old kernel, its name and its world
+  are those of the kernel home listening on the configured port, as for a
+  kernel that is served. The World page opens on the old kernel's world. Nothing is downloaded or moved before its button, **Create a new
   kernel**, which moves the kernels, `client/`, `agents/`, `services/`,
   `worlds/`, `supervisor/programs/` and `bin/juice` to
   `$JUICE_HOME/old/<version>/`, a folder of its own that nothing overwrites,
@@ -1636,19 +1666,26 @@ them. A test holds this.
   variables (env wins), over safe local defaults. At minimum: the kernel — named
   by the **name it is recorded under** (`kernel` / `JUICE_KERNEL`), resolved
   from the `kernels` half of `$JUICE_HOME/client/config.json` to the recorded
-  endpoint, public key and network, or else a bare URL (default
+  endpoint, address and network, or else a bare URL (default
   `http://127.0.0.1:4040`) — the UI listen address, and a session secret. Commit
   no secrets. Reject invalid startup configuration clearly, including a kernel
   name the records do not hold. A configuration key the records retired MUST be
   refused **by name**, naming its replacement: the remedy is not guessable from
   an unknown-field parse error.
 * **The UI knows which kernel it is for before it starts.** Under a named kernel
-  that is the recorded key; under a bare URL the kernel is identified once at
-  startup and a kernel that cannot be identified is a startup error. Every
-  `/health` answer is held to that key: an address presenting another kernel is
-  not this kernel, and nothing is trusted from it. Everything durable the UI
-  keeps for its apps is keyed by that kernel's public key, never by a name or an
-  address (ecosystem-standard §4), so state provisioned on one kernel is never
+  that is the recorded address; under a bare URL, or the record of the old
+  kernel this installation replaces (§1), written before v0.23.0 and holding
+  none, the kernel is identified once at startup, and a kernel that cannot be
+  identified is a startup error. Any other record without an address binds its
+  name to no identity: the UI does not start, and says to register the kernel
+  again (`juice kernel forget <name>`, then `juice kernel add <url>`). A record
+  must name an endpoint. A kernel is identified, and followed, only when its
+  `/health` names it by an address and reports a release at least v0.23.0: a
+  v0.22 kernel on a chain sends an address, under identities and fields of its
+  own. Every `/health` answer is held to that address: a URL presenting
+  another kernel is not this kernel, and nothing is trusted from it. Everything
+  durable the UI keeps for its apps is keyed by that kernel's address, never by
+  a name or a URL (ecosystem-standard §4), so state provisioned on one kernel is never
   replayed on another. **One process serves one kernel**, as one
   `juice kernel serve` process serves one kernel home; two kernels are two
   processes. The chrome names the kernel and the world it serves.
@@ -1758,7 +1795,7 @@ them. A test holds this.
   double-encoded strings.
 * **Every name is an address** (kernel §D15): a user is `handle@kernel`, an
   action `owner@kernel/name`, and the kernel segment is this kernel's own name
-  (`/health.handle`) for its own principals, a petname or public key for a
+  (`/health.handle`) for its own principals, a petname or address for a
   peer's. A bare `handle` or `owner/name` is refused by the kernel at every
   input. The UI **renders and sends names exactly as served** — it never
   strips, decorates, or rewrites one — and its only readings of an address are
@@ -1768,7 +1805,7 @@ them. A test holds this.
   Discover (`/browse?owner={address}`), another kernel's too, which the kernel
   lists (`GET /v1/actions?owner=`, verified on v0.20.1). **An action's page is
   reached by its address** (`GET /actions?ref=<address>`, its panel
-  `GET /actions/panel?ref=`), the kernel spelled by key, which the kernel
+  `GET /actions/panel?ref=`), the kernel spelled by address, which the kernel
   resolves (`GET /v1/actions?ref=`) whether the action is its own, a proxy of
   another's, or only discovered; a command on an action names it by id. The
   resolve of another kernel's inactive proxy dials that kernel (kernel D13) and
@@ -1820,9 +1857,9 @@ logins. And two programs logged in as one account share one session (§4), so a
 browser sign-out would revoke the operator's own command-line session.
 
 What the standard asks for observably, the UI does: it names its kernel from the
-shared records, refuses a `/health` that is not the recorded key, shows which
-kernel and world is in use, and keys everything durable by
-`(network fingerprint, kernel public key, principal id)`.
+shared records, refuses a `/health` that is not the recorded address, shows
+which kernel and world is in use, and keys everything durable by
+`(network fingerprint, kernel address, principal id)`.
 
 * The entry screen (sign in, create account, recover) takes a **handle**: the
   screen names the kernel it signs in to, so the account is that handle's
@@ -2382,7 +2419,7 @@ both MUST keep planning apart from spending:
   inspection uses (§6.6): one report per row, in the figures' own cells —
   success and rating as range bars, latency from
   `avg_latency_ms` — and the source last, `provider` for the provider's own
-  report (first) and an issuer's key otherwise. The kernel's further counts
+  report (first) and an issuer's address otherwise. The kernel's further counts
   ride in the cells' titles: on success, the uses the provider's receipts
   corroborate; on rating, the ratings no trade backs (unverified). Trades the
   source reported two ways (contradictions) count for nothing and mark the
@@ -2835,7 +2872,7 @@ open (parked tasks), the result MUST say so and link to the Wallet.
     rows, and the page holds the `funded` watch, which sends it to the root
     once the account holds money, as payment pages move on when paid.
   * **Register:** the wallet signs, EIP-191, the kernel's registration message —
-    `juice address registration`, `kernel: <public key>`, `user: <account id>`,
+    `juice address registration`, `kernel: <kernel address>`, `user: <account id>`,
     `address: <address>`, four lines, no trailing newline — with the address
     exactly as the request sends it. Without JavaScript the page shows that
     message for a typed address, to be signed elsewhere and pasted.
@@ -2929,8 +2966,8 @@ Superuser-only (`sys`), an ordinary client of the kernel's `/v1/admin/*` surface
 separate routes and refuses a target of the other kind, so a petname that
 happens to equal a handle never decides which account is acted on. The UI MUST
 therefore know which namespace it is addressing before it dials: a user is
-reached under `/admin/users/{handle}`, a kernel under `/admin/peers/{key}`, and
-no page sends a public key to the user routes. This is why the two rename forms
+reached under `/admin/users/{handle}`, a kernel under `/admin/peers/{address}`, and
+no page sends a kernel's address to the user routes. This is why the two rename forms
 and the two suspend verbs are separate here — not for
 symmetry, but because the kernel refuses anything else.
 
@@ -2948,25 +2985,26 @@ Rename and Suspend (or Unsuspend), since a user has no page here.
 **Peers.**
 
 * **The roster is the whole known network, as one list.** `/v1/admin/peers`
-  merges by public key, excluding this kernel, **counterparties** (`traded`: a
+  merges by address, excluding this kernel, **counterparties** (`traded`: a
   transaction here names the kernel) and **discovered peers** (a catalog:
   action count). The
   page lists **this kernel first, then its counterparties, then the known
   network**, each class in the kernel's own order, as one paged record list
-  (above) — the kernel's name, its key, the size of its catalog, when it was
+  (above) — the kernel's name, its address, the size of its catalog, when it was
   last seen — and **not polled**. A class is marked by a neutral pill beside its name:
   `this kernel` on this kernel, `party` on a counterparty; a known kernel
   carries no mark. This kernel's title is its own handle, and its row links
   nowhere, because it is this page; a peer's row opens its page. The identity
   this kernel's row needs is read before the page renders: a failed read is an
   error, never a blank row.
-  **Every row carries its key, in one spelling.** The abbreviation exists for
-  matching, and the one **copy control** (§7) beside it yields the whole key,
-  because every command that takes a kernel takes the whole key and an
-  operator hands their own kernel's key on: a row's **Key** column holds it,
-  this kernel's row included; an unbound kernel's name already is the
-  abbreviated key, with its copy, so its Key cell is empty and the key is
-  spelled once.
+  **Every row carries its address, in one spelling.** The abbreviation exists
+  for matching, and the one **copy control** (§7) beside it yields the whole
+  address, because every command that takes a kernel takes the whole address
+  and an operator hands their own kernel's address on: a row's **Address**
+  column holds it, this kernel's row included; an unbound kernel's name
+  already is the abbreviated address, with its copy, so its Address cell is
+  empty and the address is spelled once. Where this kernel is paid is that
+  same address, so the page does not state it again.
   **A peer row's figures** are the catalog count (both classes) and
   `last_seen` — when a verified exchange last succeeded, catalog freshness —
   dated, `never` until one has. It is a dated fact and never a status pill,
@@ -3011,22 +3049,24 @@ Rename and Suspend (or Unsuspend), since a user has no page here.
   inbound call, or an outbound call that resolves and caches a proxy (peering is
   handshake-free). The page therefore offers **no subscribe or unsubscribe
   affordance**, and **no funding gesture at all**: a deposit credits a user, the
-  kernel serves no route that credits a peer, and a peer key sent to the user
-  route is refused as not a user. The durable lever is suspend, and a peer no
+  kernel serves no route that credits a peer, and a peer's address sent to the
+  user route is refused as not a user. The durable lever is suspend, and a peer no
   longer called lapses through the kernel's retention.
 * **Naming is a petname system** (kernel §13, after Stiegler). A kernel has
   three names and they are not interchangeable, so the UI MUST keep them apart:
-  * its **public key** — global, self-certifying, unreadable. The only thing
-    every URL, form and mutation keys on. It renders **truncated**, with the
-    whole value yielded by its copy control (§7), never as a card title in
-    full. This
+  * its **address** — `0x` and 40 hex digits, derived from its recovery
+    phrase; global, self-certifying, unreadable, and where it is paid. The
+    only thing every URL, form and mutation keys on. It renders **truncated**
+    as wallets do, `0x7099…79c8`, with the whole value yielded by its copy
+    control (§7), never as a card title in full. This
     holds wherever a kernel is named, including inside a sentence: a failure
     naming a peer (§6.2) carries whichever name the kernel had to hand —
-    a petname where the failing path knew one, the key otherwise — so the UI
-    abbreviates a key-shaped name before printing it. The three name classes
-    are disjoint by shape, so nothing configures this. The abbreviation MUST
-    have exactly one definition: a truncated key exists so a person can match
-    one against another, which two spellings of the same key defeat.
+    a petname where the failing path knew one, the address otherwise — so the
+    UI abbreviates an address-shaped name before printing it. The three name
+    classes are disjoint by shape, so nothing configures this. The
+    abbreviation MUST have exactly one definition, shared with a wallet's
+    address (§6.5): a truncated address exists so a person can match one
+    against another, which two spellings of the same address defeat.
   * its **nickname** — what the kernel calls *itself*. Self-asserted, collides
     freely, and **never resolves**, so it is counterparty content under §8:
     inert, never a link, and never accepted as input. It is shown as the claim
@@ -3035,35 +3075,36 @@ Rename and Suspend (or Unsuspend), since a user has no page here.
     name that resolves. It renders whole, in the provenance face.
   **One rule decides what is shown** (`docs/ui-grammar.md` "Names", §5.7): a kernel
   with a petname is shown by it alone; one without, by its nickname marked `~`
-  (`bob@~alpha`), its key shortened beside it wherever there is room and in
-  every question deciding something about it; one with neither, by its key
+  (`bob@~alpha`), its address shortened beside it wherever there is room and in
+  every question deciding something about it; one with neither, by its address
   shortened. A compact place (an author line, an action reference, a rail row)
-  adds the key once two keys have claimed one nickname. Whenever no petname
-  names the kernel, its whole address is in the title and on a copy control,
-  so a shortened key never stands without its copy. An unnamed kernel stays
-  callable by its key alone.
+  adds the address once two addresses have claimed one nickname. Whenever no
+  petname names the kernel, its whole address is in the title and on a copy
+  control, so a shortened address never stands without its copy. An unnamed
+  kernel stays callable by its address alone.
 * **Name and suspend live on the kernel's own page.** Naming binds a petname: the kernel binds one
   automatically only on this kernel's own first outbound use, so an explicit
   bind is the only way to name a kernel merely discovered, and without it the
-  operator is left typing a key. Suspend freezes the **kernel row** and makes
-  an unknown key known, so it is offered on every kernel's page, and returns to
-  that page; the page reads the row (`GET /v1/admin/peers/{key}`) to say
-  whether the kernel is suspended, since the inspection never does, and a key
-  this kernel has never learned has no row, which is a usable page and not an
-  error. **Inspect a
-  kernel by key** remains the way in for a key learned elsewhere (verified live:
-  an unknown key still returns a usable page).
+  operator is left typing an address. Suspend freezes the **kernel row** and
+  makes an unknown address known, so it is offered on every kernel's page, and
+  returns to that page; the page reads the row (`GET /v1/admin/peers/{address}`)
+  to say whether the kernel is suspended, since the inspection never does, and
+  an address this kernel has never learned has no row, which is a usable page
+  and not an error. **Inspect a kernel by address** remains the way in for an
+  address learned elsewhere (verified live on v0.23.0: an unknown address
+  returns a usable page, `source: none`).
 * **A kernel is named on its own page.** The petname form lives on the inspect
-  page, which is where a kernel is shown, and posts the **public key** — an
+  page, which is where a kernel is shown, and posts the **address** — an
   unbound kernel has no name to key on, and advertised names collide. A user is
   renamed on the user page. The two forms are separate because the kernel's two
   routes are, and a single form would have to guess which namespace was meant.
   **The form opens prefilled** by the kernel's own auto-bind preference (kernel
   §D15), so an explicit bind and an automatic one look alike: the petname when
-  one is bound; else the nickname when it is not key-shaped and free; else
-  `k-<key8>`; either suffixed `2`, `3`, … to the lowest free number. Free
-  means bound to no other kernel here, suspended parties included, and not
-  this kernel's own name, which it binds to its own key. The roster is read
+  one is bound; else the nickname when it is not an address and free; else
+  `k-` and the address's first eight hex digits; either suffixed `2`, `3`, …
+  to the lowest free number. Free means bound to no other kernel here,
+  suspended parties included, and not this kernel's own name, which it binds
+  to its own address. The roster is read
   for that form alone. The kernel remains the validator: a rejection flashes
   its message.
 * **The inspect page states present facts, with labels.** A strip compares
@@ -3078,11 +3119,11 @@ Rename and Suspend (or Unsuspend), since a user has no page here.
   labelled **Self-reported** because evidence is never a verdict (successes
   over uses, and the count-weighted mean rating, only where it has runs);
   and the **date** the kernel became known here (`first_seen` of its row,
-  `GET /v1/admin/peers/{key}`, for every known kernel). Transport protocol strings
+  `GET /v1/admin/peers/{address}`, for every known kernel). Transport protocol strings
   are not shown, and no absent fact renders as a row, a dash or `none`. The
   verbs stand in a `.cluster` inside the card's `.stack`, separated from the
   facts by the stack's step and by nothing else. The header names the kernel
-  with its marks, its key and its `about`, and the card holds the facts and the verbs as buttons,
+  with its marks, its address and its `about`, and the card holds the facts and the verbs as buttons,
   Name and Suspend (or Unsuspend), as the user page does. The `party` pill on
   the page is the roster's class.
 * **Work addressed to this kernel reaches its operator's inbox.** A peer
@@ -3292,7 +3333,7 @@ chat page is a view of chat's actions, and names every party of a reply by its
 principal as the viewer's kernel names it (§6.6), asking that kernel
 (`sys/resolve`) at most every ten minutes per principal, past the request: a
 name kept is drawn at once, and a principal never seen is waited for at most one
-second; a principal it cannot name, or not yet, is spelled by key, with the name
+second; a principal it cannot name, or not yet, is spelled by address, with the name
 its kernel calls itself. What a post's first word addresses stays chat's address, since
 chat routes by it. An address is never stored as identity; an **entry** is
 one thing said in a room, author, time, a body that is a JSON value (a post
@@ -3472,7 +3513,7 @@ approves, or a chat elsewhere approved and holding a grant of the viewer's;
 **asking** when it is elsewhere, has addressed the viewer, and is neither joined,
 blocked nor ignored while pending; and absent when blocked. What the UI keeps
 beside the kernel's records is, per viewer, the requesters they ignored and the
-disconnects a kernel did not answer, by selector spelled by key, in state.json
+disconnects a kernel did not answer, by selector spelled by address, in state.json
 under the server's `viewers` (not an app's). The requester
 is the consent to be addressed, the grant the connection: approving a chat in the
 inbox lets its invitations reach the viewer and connects nothing, and a grant
@@ -3964,8 +4005,9 @@ imports its live rooms, members and messages once and never writes that file.
   world cannot tell a rehearsal from a live market, which is the one thing the
   money surfaces exist to make legible. The balance view names it again in the
   pay-in sentence, where the consequence is (§6.5). Both the world's name and
-  whether its money has addresses are `/health` facts: the UI states them and
-  judges neither, never labelling a world play or real.
+  whether its money has addresses are `/health` facts — the latter its
+  `token`, since every kernel has an address since v0.23.0 — and the UI states
+  them and judges neither, never labelling a world play or real.
 
   **The unit is the world's, and the kernel renders it.** Every amount on the
   wire is an integer in the base unit of the world this kernel serves, and only
@@ -4393,8 +4435,8 @@ Every production `.go` file has a `_test.go` file with independent tests.
   every cell between, and the stylesheet stacks it on a narrow screen; a
   user's row states no description and no `active` pill; a kernel's row its
   class pills, catalog size and last seen, `Name` only when unnamed, this
-  kernel's linking nowhere, and every row's key with its copy, once — in the
-  Key column, or as the name of an unbound kernel;
+  kernel's linking nowhere, and every row's address with its copy, once — in
+  the Address column, or as the name of an unbound kernel;
 * the network page's halt banner is led by `#alert`, a banner in page flow owns
   its spacing, and the vault's finalized holdings render as served (§6.6);
 * what is known about an action comes from its detail read: the strip is
@@ -4407,7 +4449,7 @@ Every production `.go` file has a `_test.go` file with independent tests.
   credit position and the obligations owed to it — each a fact with no gesture,
   one awaiting its buyer rendering no figure and no empty badge (§6.6);
 * the two admin namespaces: a user verb reaches `/admin/users/…` and a peer verb
-  `/admin/peers/…`, and no page sends a public key to a user route (§3.1, §6.6);
+  `/admin/peers/…`, and no page sends a kernel's address to a user route (§3.1, §6.6);
 * the retired surfaces stay gone: settle, admin withdraw, unimport, the transfer
   queue, a peer's balance, funding a peer, confirming an obligation, the
   whole `/control/` prefix, the stats route, a parked call's refund date, the

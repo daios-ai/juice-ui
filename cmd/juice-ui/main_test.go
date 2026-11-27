@@ -140,7 +140,7 @@ func fakeKernel(t *testing.T) *httptest.Server {
 	t.Helper()
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"status":"ok","handle":"testnet","public_key":"KEYTEST","network":"play","network_fingerprint":"D1","decimals":0,"symbol":"credits"}`))
+		w.Write([]byte(`{"status":"ok","handle":"testnet","blockchain_address":"0x9858effd232b4033e47d90003d41ec34ecaeda94","network":"play","network_fingerprint":"D1","decimals":0,"symbol":"credits","version":"v0.23.0"}`))
 	})
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
@@ -160,8 +160,18 @@ func TestBuildRefusesAnUnidentifiableKernel(t *testing.T) {
 	if _, err := build(w, cfg, log); err == nil {
 		t.Fatal("build must refuse a kernel it cannot identify")
 	}
+	// A v0.22 kernel on a chain sends an address, but is not one this UI follows.
+	v022 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"blockchain_address":"0x9858effd232b4033e47d90003d41ec34ecaeda94","version":"v0.22.1"}`))
+	}))
+	defer v022.Close()
+	cfg.KernelBaseURL = v022.URL
+	w, _ = wire(cfg, log)
+	if _, err := build(w, cfg, log); err == nil {
+		t.Fatal("build must refuse a kernel older than v0.23.0")
+	}
 	// With a named kernel the identity is on record, and no probe is needed.
-	cfg.Kernel, cfg.KernelPublicKey = "alpha", "KEYA"
+	cfg.Kernel, cfg.KernelAddress = "alpha", "KEYA"
 	w, _ = wire(cfg, log)
 	if _, err := build(w, cfg, log); err != nil {
 		t.Fatalf("a named kernel must let the UI start with the kernel down: %v", err)

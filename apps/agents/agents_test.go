@@ -1417,7 +1417,7 @@ type fakeKernel struct {
 func newKernel(t *testing.T) *fakeKernel {
 	t.Helper()
 	k := &fakeKernel{me: "research@testnet",
-		health: `{"status":"ok","handle":"testnet","public_key":"KEY","network":"play","network_fingerprint":"FP","decimals":6,"symbol":"fUSD"}`}
+		health: `{"status":"ok","handle":"testnet","blockchain_address":"KEY","network":"play","network_fingerprint":"FP","decimals":6,"symbol":"fUSD"}`}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(k.health)) })
 	mux.HandleFunc("POST /v1/users", func(w http.ResponseWriter, r *http.Request) {

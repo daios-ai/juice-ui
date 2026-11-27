@@ -1,7 +1,9 @@
 package chat
 
 import (
+	"crypto/sha1"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -398,14 +400,28 @@ func TestKeys(t *testing.T) {
 }
 
 // pr is the principal of address in these tests: an id derived from the handle,
-// at a key derived from the kernel's name. The address is kept as what the test
+// at an address derived from the kernel's name. The address is kept as what the test
 // kernel names the principal by.
 func pr(address string) string {
 	h, k, _ := strings.Cut(address, "@")
-	p := fmt.Sprintf("%08x-0000-4000-8000-000000000000", crc32.ChecksumIEEE([]byte(h))) + "@" + (k + strings.Repeat("K", client.KeyLen))[:client.KeyLen]
+	p := fmt.Sprintf("%08x-0000-4000-8000-000000000000", crc32.ChecksumIEEE([]byte(h))) + "@" + kernelAddress(k)
 	addresses.LoadOrStore(p, address)
 	return p
 }
+
+// kernelAddress is the address of the test kernel named kernel, or by its
+// address; kernelOf reads its name back.
+func kernelAddress(kernel string) string {
+	if client.IsChainAddress(kernel) {
+		return kernel
+	}
+	sum := sha1.Sum([]byte(kernel))
+	a := "0x" + hex.EncodeToString(sum[:])
+	kernelNames.Store(a, kernel)
+	return a
+}
+
+var kernelNames sync.Map
 
 // addresses is each principal's address, as pr made it.
 var addresses sync.Map

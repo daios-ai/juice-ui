@@ -191,7 +191,7 @@ func (c *Chat) login() string { return c.deps.Address(chatHandle) }
 
 // chat is the chat at service as a party, as the viewer's kernel last named
 // it: this kernel's chat by this kernel's own name, else the requester as learn
-// recorded it, else by its key. A page draws it, and its kernel
+// recorded it, else by its address. A page draws it, and its kernel
 // (client.Party.Kernel), by _name; a sentence by shown.
 func (c *Chat) chat(service string) client.Party {
 	if service == c.self() {
@@ -210,7 +210,7 @@ func (c *Chat) chat(service string) client.Party {
 func (c *Chat) shown(service string) string { return c.chat(service).Shown() }
 
 // learn records a requester that is a chat, as the viewer's kernel names it,
-// and answers the requester by key.
+// and answers the requester by its address.
 func (c *Chat) learn(q client.Party) string {
 	chat := q.Keyed()
 	if strings.HasPrefix(chat, chatHandle+"@") {
@@ -248,7 +248,7 @@ const (
 // kernel is asked by sys/resolve, which may dial the principal's kernel, so a
 // name is asked past the request: one kept, even past nameKept, is drawn as
 // kept and asked again; one never seen is waited for at most wait, then
-// spelled by key with the nickname its kernel gives itself
+// spelled by address with the nickname its kernel gives itself
 // (client.Party.Keyed) until its answer arrives. A principal is stamped as it
 // is asked, so it is not asked twice, and a failed ask leaves the stamp. A seat
 // not bound yet has no principal and keeps what was typed for it.

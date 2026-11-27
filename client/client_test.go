@@ -49,11 +49,11 @@ func (f *fakeKernel) close()          { f.srv.Close() }
 
 func TestHealthCarriesTheIdentityBanner(t *testing.T) {
 	// /health is what a client pins before it trusts a server, and it fixes the
-	// money unit: the key and network digest identify the kernel, decimals scales
-	// every amount, and rail_address says where the kernel is paid.
+	// money unit: the address and network digest identify the kernel, and
+	// decimals scales every amount.
 	f := newFake()
 	defer f.close()
-	f.reply = `{"status":"ok","handle":"alpha","public_key":"abc","network":"play","network_fingerprint":"ef1f","decimals":6,"blockchain_address":"0xdead"}`
+	f.reply = `{"status":"ok","handle":"alpha","network":"play","network_fingerprint":"ef1f","decimals":6,"blockchain_address":"0xdead"}`
 	if got := f.client().BaseURL(); got != f.srv.URL {
 		t.Fatalf("BaseURL = %q, want the endpoint dialled %q", got, f.srv.URL)
 	}
@@ -61,7 +61,7 @@ func TestHealthCarriesTheIdentityBanner(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Health: %v", err)
 	}
-	if h.Status != "ok" || h.Handle != "alpha" || h.PublicKey != "abc" {
+	if h.Status != "ok" || h.Handle != "alpha" || h.BlockchainAddress != "0xdead" {
 		t.Errorf("identity = %+v", h)
 	}
 	if h.Network != "play" || h.NetworkFingerprint != "ef1f" || h.Decimals != 6 || h.BlockchainAddress != "0xdead" {
@@ -69,10 +69,10 @@ func TestHealthCarriesTheIdentityBanner(t *testing.T) {
 	}
 }
 
-// Keyed spells a party's kernel by the key its principal names, for a user, an
+// Keyed spells a party's kernel by the address its principal names, for a user, an
 // action and a kernel alike; a party with no principal is its address.
 func TestPartyKeyed(t *testing.T) {
-	k := strings.Repeat("k", KeyLen)
+	k := "0x" + strings.Repeat("1", 40)
 	for _, c := range []struct {
 		p    Party
 		want string
@@ -88,42 +88,70 @@ func TestPartyKeyed(t *testing.T) {
 	}
 }
 
-// A kernel's key is told from a petname and a handle by its length alone.
-func TestIsKey(t *testing.T) {
+// A kernel's address is told from a petname and a handle by its shape: 0x and
+// 40 hex digits, in either case, as a wallet or a principal writes it.
+func TestIsChainAddress(t *testing.T) {
 	for name, want := range map[string]bool{
-		"A6cNHvNorZnpDVCUlumIjudATk9NNgN2v1IddpzwxN5G": true, // as kernel v0.22.1 sends
-		"1MutJi6KXZIWlxJMiIKsu4gR6-R4ACoEJwP7sNT_mq4":  false,
+		"0x9858effd232b4033e47d90003d41ec34ecaeda94":   true, // as kernel v0.23.0 sends
+		"0x70997970C51812dc3A010C7d01b50e0d17dc79C8":   true,
+		"0x70997970C51812dc3A010C7d01b50e0d17dc79Cg":   false,
+		"0x70997970C51812dc3A010C7d01b50e0d17dc79C":    false,
+		"A6cNHvNorZnpDVCUlumIjudATk9NNgN2v1IddpzwxN5G": false, // a v0.22 key
 		"beta": false, "": false,
 	} {
-		if IsKey(name) != want {
-			t.Errorf("IsKey(%q) = %v", name, !want)
+		if IsChainAddress(name) != want {
+			t.Errorf("IsChainAddress(%q) = %v", name, !want)
 		}
 	}
 }
 
-// An address names its kernel by key as ShortKey shows a key; an address by
-// name, and anything that is no address, pass unchanged.
+// A kernel this UI follows is named by its address and runs v0.23.0 or later:
+// a v0.22 kernel on a chain sends an address too, and a kernel's build of a
+// commit after a release is older than it, as the installer compares them.
+func TestHealthIsCurrent(t *testing.T) {
+	a := "0x9858effd232b4033e47d90003d41ec34ecaeda94"
+	for h, want := range map[Health]bool{
+		{BlockchainAddress: a, Version: "v0.23.0"}:        true,
+		{BlockchainAddress: a, Version: "v0.24.1"}:        true,
+		{BlockchainAddress: a, Version: "v0.22.1"}:        false,
+		{BlockchainAddress: a, Version: "v0.23.0-3-gabc"}: false,
+		{BlockchainAddress: a}:                            false,
+		{Version: "v0.23.0"}:                              false,
+	} {
+		if h.Current() != want {
+			t.Errorf("%+v: Current = %v", h, !want)
+		}
+	}
+}
+
+// An address is shortened as wallets do, 0x7099…79C8, alone or as the kernel
+// of a Juice address; an address by name, and anything that is no address,
+// pass unchanged.
 func TestShortAddress(t *testing.T) {
-	key := strings.Repeat("a", KeyLen-4) + "WXYZ"
+	key := "0x" + strings.Repeat("a", 36) + "beef"
 	for in, want := range map[string]string{
-		"bob@" + key:          "bob@aaaaaaaaaa…WXYZ",
+		key:                   "0xaaaa…beef",
+		"bob@" + key:          "bob@0xaaaa…beef",
 		"bob@beta":            "bob@beta",
 		"bob":                 "bob",
 		"bob@" + key + "x":    "bob@" + key + "x",
-		"bob@" + key + "/a/b": "bob@aaaaaaaaaa…WXYZ/a/b", // an action's key too
+		"bob@" + key + "/a/b": "bob@0xaaaa…beef/a/b", // an action's address too
 	} {
 		if got := ShortAddress(in); got != want {
 			t.Errorf("ShortAddress(%q) = %q, want %q", in, got, want)
 		}
 	}
+	if ShortChainAddress(key) != "0xaaaa…beef" || ShortChainAddress("beta") != "beta" {
+		t.Error("ShortChainAddress shortens an address and passes a name whole")
+	}
 }
 
 // A kernel named here is shown by its petname alone, one that calls itself
-// something by that name marked ~, one that does neither by its key; a
-// question adds the key a nickname stands in for.
+// something by that name marked ~, one that does neither by its address; a
+// question adds the address a nickname stands in for.
 func TestPartyLabel(t *testing.T) {
-	key := strings.Repeat("a", KeyLen-4) + "WXYZ"
-	short := "aaaaaaaaaa…WXYZ"
+	key := "0x" + strings.Repeat("a", 36) + "beef"
+	short := "0xaaaa…beef"
 	for _, c := range []struct {
 		p                   Party
 		label, shown, claim string
@@ -152,8 +180,8 @@ func TestPartyLabel(t *testing.T) {
 // the kernel as Label names it, the path; a kernel has neither handle nor path.
 // Owner and Kernel are parties named by the same rule.
 func TestPartyParts(t *testing.T) {
-	key := strings.Repeat("a", KeyLen-4) + "WXYZ"
-	short := "aaaaaaaaaa…WXYZ"
+	key := "0x" + strings.Repeat("a", 36) + "beef"
+	short := "0xaaaa…beef"
 	for _, c := range []struct {
 		p                    Party
 		handle, kernel, path string
@@ -1076,8 +1104,8 @@ func TestActionEvidenceDecodes(t *testing.T) {
 	var a Action
 	body := `{"id":"P","action":{"address":"seller@k-4lnq/greet","principal":"seller@k-4lnq/greet"},"evidence":{
 	  "local_experience":{"action_id":"P","uses":2,"successes":1,"failures":1,"rating_count":1,"rating_estimate":1},
-	  "provider_reported":{"issuer_public_key":"PROV","subject_action_id":"R","uses":1,"successes":1,"avg_latency_ms":0.5,"contradictions":0},
-	  "observed_by_others":[{"issuer_public_key":"OTHER","subject_action_id":"R","uses":3,"corroborated_uses":2,"contradictions":1,"unverified_ratings":1}],
+	  "provider_reported":{"issuer_kernel":"PROV","subject_action_id":"R","uses":1,"successes":1,"avg_latency_ms":0.5,"contradictions":0},
+	  "observed_by_others":[{"issuer_kernel":"OTHER","subject_action_id":"R","uses":3,"corroborated_uses":2,"contradictions":1,"unverified_ratings":1}],
 	  "retained_cap":200}}`
 	if err := json.Unmarshal([]byte(body), &a); err != nil {
 		t.Fatal(err)
@@ -1085,7 +1113,7 @@ func TestActionEvidenceDecodes(t *testing.T) {
 	if st := a.Experience(); st == nil || st.Uses != 2 || st.RatingCount != 1 {
 		t.Fatalf("Experience = %+v", st)
 	}
-	if p := a.Evidence.ProviderReported; p == nil || p.IssuerPublicKey != "PROV" || p.AvgLatencyMs != 0.5 {
+	if p := a.Evidence.ProviderReported; p == nil || p.IssuerKernel != "PROV" || p.AvgLatencyMs != 0.5 {
 		t.Fatalf("provider report = %+v", p)
 	}
 	if o := a.Evidence.ObservedByOthers; len(o) != 1 || o[0].Contradictions != 1 || o[0].CorroboratedUses != 2 || o[0].UnverifiedRating != 1 {

@@ -142,14 +142,14 @@ func TestKernelNameResolvesFromClientRecords(t *testing.T) {
 	client := filepath.Join("/j", "client", "config.json")
 	// The records the current CLI writes: kernels, and the selected login. There
 	// is no contexts map any more (docs/kernel-v0.15-verification.md §7).
-	records := `{"current":"ana@alpha","kernels":{"alpha":{"endpoint":"http://127.0.0.1:4141","public_key":"KEYA","world_digest":"D1","network":"play","decimals":6,"symbol":"credits"}}}`
+	records := `{"current":"ana@alpha","kernels":{"alpha":{"endpoint":"http://127.0.0.1:4141","blockchain_address":"KEYA","world_digest":"D1","network":"play","decimals":6,"symbol":"credits"}}}`
 	uiCfg := filepath.Join("/j", "ui", "config.json")
 	cfg, err := LoadConfig(env(map[string]string{"JUICE_HOME": "/j", "JUICE_KERNEL_URL": "http://elsewhere:1"}),
 		files(map[string]string{client: records, uiCfg: `{"kernel":"alpha"}`}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Kernel != "alpha" || cfg.KernelBaseURL != "http://127.0.0.1:4141" || cfg.KernelPublicKey != "KEYA" || cfg.KernelNetwork != "play" {
+	if cfg.Kernel != "alpha" || cfg.KernelBaseURL != "http://127.0.0.1:4141" || cfg.KernelAddress != "KEYA" || cfg.KernelNetwork != "play" {
 		t.Errorf("kernel not resolved from the client records: %+v", cfg)
 	}
 	if len(cfg.Notices) != 1 || !contains(cfg.Notices[0], "kernel_url is ignored") {
@@ -157,8 +157,40 @@ func TestKernelNameResolvesFromClientRecords(t *testing.T) {
 	}
 	// The environment names a kernel too, and wins over the file.
 	cfg2, err := LoadConfig(env(map[string]string{"JUICE_HOME": "/j", "JUICE_KERNEL": "alpha"}), files(map[string]string{client: records}))
-	if err != nil || cfg2.KernelPublicKey != "KEYA" {
+	if err != nil || cfg2.KernelAddress != "KEYA" {
 		t.Errorf("JUICE_KERNEL must resolve: %+v %v", cfg2, err)
+	}
+}
+
+// A record a kernel before v0.23 wrote names the kernel by its public key and
+// holds no address: it still names the kernel's endpoint, and the address is
+// left to be asked of the kernel only when it is the old kernel this
+// installation replaces, so that it starts and reaches the page that does so.
+// Any other such record binds its name to no identity and is registered again.
+// A record with no endpoint names nothing.
+func TestARecordWithoutAnAddressLeavesItToBeAsked(t *testing.T) {
+	client := filepath.Join("/j", "client", "config.json")
+	old := `{"kernels":{"alpha":{"endpoint":"http://127.0.0.1:4141","public_key":"A6cNHvNorZnpDVCUlumIjudATk9NNgN2v1IddpzwxN5G","network":"play"}}}`
+	cfg, err := LoadConfig(env(map[string]string{"JUICE_HOME": "/j", "JUICE_KERNEL": "alpha"}), files(map[string]string{client: old}))
+	if err != nil || cfg.KernelBaseURL != "http://127.0.0.1:4141" || cfg.KernelAddress != "" {
+		t.Errorf("a record without an address: %+v %v", cfg, err)
+	}
+	if err := cfg.identify(true); err != nil || cfg.KernelAddress != "" {
+		t.Errorf("the old kernel this installation replaces is asked for its address: %v", err)
+	}
+	if err := cfg.identify(false); err == nil || !contains(err.Error(), "juice kernel forget alpha") {
+		t.Errorf("any other kernel recorded without an address is registered again: %v", err)
+	}
+	cfg.KernelAddress = "0x9858effd232b4033e47d90003d41ec34ecaeda94"
+	if err := cfg.identify(false); err != nil || cfg.KernelAddress == "" {
+		t.Errorf("a recorded address stands: %v", err)
+	}
+	if err := cfg.identify(true); err != nil || cfg.KernelAddress != "" {
+		t.Errorf("the old kernel's address is not the new one's: %v", err)
+	}
+	none := `{"kernels":{"alpha":{"blockchain_address":"KEYA","network":"play"}}}`
+	if _, err := LoadConfig(env(map[string]string{"JUICE_HOME": "/j", "JUICE_KERNEL": "alpha"}), files(map[string]string{client: none})); err == nil || !contains(err.Error(), "records no endpoint") {
+		t.Errorf("a record without an endpoint: %v", err)
 	}
 }
 
@@ -166,7 +198,7 @@ func TestKernelNameResolvesFromClientRecords(t *testing.T) {
 // records that do not exist, are hard startup errors.
 func TestUnknownKernelIsAStartupError(t *testing.T) {
 	client := filepath.Join("/j", "client", "config.json")
-	records := `{"kernels":{"alpha":{"endpoint":"http://k","public_key":"KEYA","network":"play"}}}`
+	records := `{"kernels":{"alpha":{"endpoint":"http://k","blockchain_address":"KEYA","network":"play"}}}`
 	if _, err := LoadConfig(env(map[string]string{"JUICE_HOME": "/j", "JUICE_KERNEL": "nope"}), files(map[string]string{client: records})); err == nil {
 		t.Error("an unknown kernel name must refuse to start")
 	}
@@ -181,7 +213,7 @@ func TestUnknownKernelIsAStartupError(t *testing.T) {
 // remedy — name the kernel instead — is not guessable from that.
 func TestRetiredContextKeyIsRefusedByName(t *testing.T) {
 	client := filepath.Join("/j", "client", "config.json")
-	records := `{"kernels":{"alpha":{"endpoint":"http://k","public_key":"KEYA","network":"play"}}}`
+	records := `{"kernels":{"alpha":{"endpoint":"http://k","blockchain_address":"KEYA","network":"play"}}}`
 	uiCfg := filepath.Join("/j", "ui", "config.json")
 	_, err := LoadConfig(env(map[string]string{"JUICE_HOME": "/j"}),
 		files(map[string]string{client: records, uiCfg: `{"context":"alpha"}`}))

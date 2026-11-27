@@ -122,6 +122,13 @@ func (k *fakeKernel) Create(world, handle, password, phrase string, m any) error
 	return nil
 }
 
+// createdNow is what Create was given so far.
+func (k *fakeKernel) createdNow() []string {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	return append([]string(nil), k.created...)
+}
+
 // Models reads the page as the entrypoint's adapter does, refusing a chat
 // provider with no model.
 func (k *fakeKernel) Models(_ context.Context, form url.Values, held any) (any, string, bool) {
@@ -848,6 +855,76 @@ func TestAnOldKernelsPageStatesOnlyWhatIsKnown(t *testing.T) {
 	waitFor(t, in, "old")
 	if b := page(t, h); strings.Contains(b, "install.sh") || strings.Contains(b, "old address") {
 		t.Error("no way back and no chain warning")
+	}
+}
+
+// A kernel made since v0.22.0 is recreated from its recovery phrase if the
+// operator types it: the page says what the phrase keeps, a phrase that fails
+// its checksum is refused before anything is moved, a valid one is the phrase
+// the new kernel is made with and the one the Recovery phrase page shows, and
+// the World page opens on the old kernel's world. Left empty, the phrase made
+// for a new kernel stands.
+func TestAnOldKernelsPhraseKeepsItsAddress(t *testing.T) {
+	const typed = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
+	k := &fakeKernel{booted: true, old: &OldKernel{Handle: "alpha", Version: "0.22.1", World: "polygon", Chain: true, Phrase: true, Kept: "/k"}}
+	in, h := start(t, k)
+	waitFor(t, in, "old")
+	b := page(t, h)
+	for _, want := range []string{"last served by kernel 0.22.1", "Kernels are now named by their blockchain address", `name="phrase"`,
+		"Recovery phrase of the old kernel", "the old one's address, and the coins at it on the chain", "Leave empty for a new address."} {
+		if !strings.Contains(b, want) {
+			t.Errorf("the page lacks %q", want)
+		}
+	}
+	if strings.Contains(b, "stays at its old address") || strings.Contains(b, "made by Juice") {
+		t.Error("the phrase replaces the chain warning, and a kernel's release is not Juice's")
+	}
+	if rec := next(t, h, "old", url.Values{"phrase": {"abandon abandon about"}}); rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), "That is not a recovery phrase.") || k.retired != 0 {
+		t.Errorf("an invalid phrase is refused before anything moves: %d, retired %d", rec.Code, k.retired)
+	}
+	next(t, h, "old", url.Values{"phrase": {"  " + strings.ReplaceAll(typed, " ", "  \n ") + " "}})
+	waitFor(t, in, "world")
+	if b := page(t, h); !strings.Contains(b, `value="polygon" required checked>`) {
+		t.Error("the World page opens on the old kernel's world")
+	}
+	next(t, h, "world", url.Values{"world": {"polygon"}})
+	next(t, h, "kernel", url.Values{"handle": {"alpha"}, "password": {"secret123"}, "confirm_password": {"secret123"}})
+	next(t, h, "assistant", url.Values{"password": {"assist123"}, "confirm_password": {"assist123"}})
+	waitFor(t, in, "models")
+	next(t, h, "models", url.Values{"chat_provider": {"other"}, "chat_url": {"http://127.0.0.1:1/v1"}, "chat_key": {"sk-1"}, "chat_model": {"m1"}})
+	waitFor(t, in, "phrase")
+	if b := page(t, h); !strings.Contains(b, "<li>about</li>") || strings.Contains(b, "<li>ability</li>") {
+		t.Error("the Recovery phrase page shows the phrase typed")
+	}
+	next(t, h, "phrase", url.Values{"understand": {"on"}})
+	waitFor(t, in, "summary")
+	next(t, h, "summary", nil)
+	for deadline := time.Now().Add(3 * time.Second); len(k.createdNow()) == 0 && time.Now().Before(deadline); {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if c := k.createdNow(); len(c) != 1 || c[0] != "polygon alpha secret123 "+typed {
+		t.Errorf("created %v", c)
+	}
+
+	// Empty, the phrase made for a new kernel stands; a kernel made before
+	// v0.22.0, whose phrase restores nothing, is asked for none.
+	k = &fakeKernel{booted: true, old: &OldKernel{Version: "0.22.1", World: "play", Phrase: true, Kept: "/k"}}
+	in, h = start(t, k)
+	waitFor(t, in, "old")
+	if b := page(t, h); strings.Contains(b, "the coins at it") || !strings.Contains(b, "the old one's address.") {
+		t.Error("off a chain the phrase keeps the address alone")
+	}
+	next(t, h, "old", url.Values{"phrase": {""}})
+	waitFor(t, in, "world")
+	in.mu.Lock()
+	if in.phrase != phrase {
+		t.Errorf("an empty field keeps the new phrase: %q", in.phrase)
+	}
+	in.mu.Unlock()
+	in, h = start(t, &fakeKernel{booted: true, old: &OldKernel{Version: "0.21.3", Kept: "/k"}})
+	waitFor(t, in, "old")
+	if strings.Contains(page(t, h), `name="phrase"`) {
+		t.Error("a kernel made before v0.22.0 is asked for no phrase")
 	}
 }
 

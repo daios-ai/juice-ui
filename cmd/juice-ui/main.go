@@ -85,12 +85,12 @@ type wiring struct {
 	assistant func(password string)
 }
 
-// wire constructs the client, the identity (pinned to the recorded key when
-// the kernel is named, pinned later from /health when it is a bare address),
+// wire constructs the client, the identity (pinned to the recorded address
+// when the kernel's record holds one, pinned later from /health otherwise),
 // the apps and the renderer.
 func wire(cfg Config, log *slog.Logger) (*wiring, error) {
 	w := &wiring{kernel: client.New(cfg.KernelBaseURL, &http.Client{Timeout: 5 * time.Minute})}
-	w.identity = server.NewKernelIdentity(w.kernel, cfg.KernelPublicKey, cfg.BadgeInterval, log)
+	w.identity = server.NewKernelIdentity(w.kernel, cfg.KernelAddress, cfg.BadgeInterval, log)
 
 	// App modules. Each is self-contained; the core only knows the apps.App
 	// seam. Chat is where a session lands; it provisions its own service
@@ -143,16 +143,17 @@ func sessionStore(secure bool) *scs.SessionManager {
 func build(w *wiring, cfg Config, log *slog.Logger) (http.Handler, error) {
 	// The UI must know WHICH kernel it is for before anything is keyed on it: the
 	// app state, the session pin, and the unit every amount is read in. A named
-	// kernel says so from the client records, offline. A bare address says
-	// nothing, so the kernel is asked once — and a UI that cannot identify its
-	// kernel does not start, rather than working under a guess.
-	if cfg.KernelPublicKey == "" {
+	// kernel says so from the client records, offline. A bare URL, or the old
+	// kernel this installation replaces (Config.identify), says nothing, so the
+	// kernel is asked once — and a UI that cannot identify its kernel does not
+	// start, rather than working under a guess.
+	if cfg.KernelAddress == "" {
 		id, err := server.AwaitKernel(w.kernel, 10*time.Second)
 		if err != nil {
 			return nil, fmt.Errorf("kernel at %s could not be identified (%w); name a kernel with JUICE_KERNEL or `kernel` in config.json, or start the kernel", cfg.KernelBaseURL, err)
 		}
-		w.identity.Pin(id.PublicKey)
-		log.Info("kernel identified", "handle", id.Handle, "network", id.Network, "key", client.ShortKey(id.PublicKey))
+		w.identity.Pin(id.BlockchainAddress)
+		log.Info("kernel identified", "handle", id.Handle, "network", id.Network, "address", id.BlockchainAddress)
 	}
 	// Read /health now, so the kernel's name is known before any app composes
 	// an address with it; a kernel that is down is read again on the next
@@ -447,8 +448,10 @@ func run() (code int, next string) {
 	defer sup.Close()
 	kernelURL, _ := url.Parse(cfg.KernelBaseURL) // validated by LoadConfig
 	inst := &kernel.Installation{Home: cfg.Root, URL: kernelURL, Log: log, Programs: sup, Ctx: ctx}
-	if _, old := inst.Old(); old {
-		cfg.KernelPublicKey = "" // the old kernel's: the new one is asked for its own
+	_, old := inst.Old()
+	if err := cfg.identify(old); err != nil {
+		log.Error("invalid configuration", "err", err)
+		return 1, ""
 	}
 	w, err := wire(cfg, log)
 	if err != nil {

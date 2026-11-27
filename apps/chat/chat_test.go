@@ -2,6 +2,8 @@ package chat
 
 import (
 	"context"
+	"crypto/sha1"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -187,11 +189,11 @@ func (f *fakeKernel) awayRuns() int {
 const home = "chat@testnet"
 
 // pr is the principal of address in these tests: an id derived from the
-// handle, at a key derived from the kernel's name, which the test kernel names
+// handle, at an address derived from the kernel's name, which the test kernel names
 // by address again (addressOf).
 func pr(address string) string {
 	h, k, _ := strings.Cut(address, "@")
-	p := fmt.Sprintf("%08x-0000-4000-8000-000000000000", crc32.ChecksumIEEE([]byte(h))) + "@" + (k + strings.Repeat("K", client.KeyLen))[:client.KeyLen]
+	p := fmt.Sprintf("%08x-0000-4000-8000-000000000000", crc32.ChecksumIEEE([]byte(h))) + "@" + kernelKey(k)
 	addresses.LoadOrStore(p, address)
 	return p
 }
@@ -243,9 +245,20 @@ var (
 	homeChat, farChat = "chat@" + testKey, "chat@" + awayKey
 )
 
-// kernelKey is the key of the test kernel named kernel.
+// kernelKey is the address of the test kernel named kernel, or by its
+// address.
 func kernelKey(kernel string) string {
-	return (kernel + strings.Repeat("K", client.KeyLen))[:client.KeyLen]
+	if client.IsChainAddress(kernel) {
+		return kernel
+	}
+	sum := sha1.Sum([]byte(kernel))
+	return "0x" + hex.EncodeToString(sum[:])
+}
+
+// atNowhere reports an address or a principal on the kernel no one knows,
+// named by its name or its address.
+func atNowhere(a string) bool {
+	return strings.Contains(a, "@nowhere") || strings.Contains(a, "@"+kernelKey("nowhere"))
 }
 
 // norm is a reference to a chat as the test kernel holds it, by its kernel's
@@ -303,7 +316,7 @@ func newFakeKernel(seed ...fakeAction) *fakeKernel {
 	ok := func(body string) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(body)) }
 	}
-	mux.HandleFunc("GET /health", ok(`{"status":"ok","handle":"testnet","public_key":"`+testKey+`"}`))
+	mux.HandleFunc("GET /health", ok(`{"status":"ok","handle":"testnet","blockchain_address":"`+testKey+`"}`))
 	mux.HandleFunc("POST /v1/users", ok(`{}`))
 	mux.HandleFunc("POST /v1/auth/authorize", ok(`{"redirect":"?code=c"}`))
 	mux.HandleFunc("POST /v1/auth/token", ok(`{"access_token":"t","refresh_token":"r"}`))
@@ -432,7 +445,7 @@ func newFakeKernel(seed ...fakeAction) *fakeKernel {
 		}
 		var in map[string]any
 		_ = json.NewDecoder(r.Body).Decode(&in)
-		if strings.Contains(in["required_caller"].(string), "@nowhere") {
+		if atNowhere(in["required_caller"].(string)) {
 			http.Error(w, `{"error":"kernel \"nowhere\" is not a known name or key"}`, http.StatusNotFound)
 			return
 		}
@@ -462,7 +475,7 @@ func newFakeKernel(seed ...fakeAction) *fakeKernel {
 			} `json:"args"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&in)
-		if r.Header.Get(client.CapabilityHeader) == "" || in.Action != client.Resolve || strings.Contains(in.Args.Address, "@nowhere") {
+		if r.Header.Get(client.CapabilityHeader) == "" || in.Action != client.Resolve || atNowhere(in.Args.Address) {
 			http.Error(w, `{"code":"not_found","error":"remote user not found"}`, http.StatusNotFound)
 			return
 		}
@@ -627,7 +640,7 @@ func newFakeKernel(seed ...fakeAction) *fakeKernel {
 			if !ok {
 				p = party(a.Address)
 			}
-			if strings.Contains(p.Address, "@nowhere") {
+			if atNowhere(p.Address) {
 				http.Error(w, `{"code":"not_found","error":"remote user not found"}`, http.StatusNotFound)
 				return
 			}
@@ -3272,7 +3285,7 @@ func TestARoomElsewhereTakesTheSamePath(t *testing.T) {
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("HX-Request", "true")
 	req.SetPathValue("id", far.ID+"@"+awayKey)
-	if rec := as(c, sm, c.postMessage, req); rec.Code != 200 || note != "Not delivered to remy@"+client.ShortKey(kernelOf(pr("remy@nowhere")))+"." {
+	if rec := as(c, sm, c.postMessage, req); rec.Code != 200 || note != "Not delivered to remy@"+client.ShortChainAddress(kernelOf(pr("remy@nowhere")))+"." {
 		t.Fatalf("the post and whom it missed: %d %q", rec.Code, note)
 	}
 	if got := f.ranAt("chat@away", postName); len(got) != 1 || got[0] != `{"message":"hello far","thread_id":"`+far.ID+`"}` {
@@ -3691,10 +3704,10 @@ func TestTwoChatsClaimingOneNicknameNameTheirKeys(t *testing.T) {
 		t.Errorf("one claimant: %q", got)
 	}
 	b := c.learn(client.Party{Address: "chat@" + other, Principal: "c2@" + other, Nickname: "away"})
-	if got := label(b); got != "~away "+client.ShortKey(other) {
+	if got := label(b); got != "~away "+client.ShortChainAddress(other) {
 		t.Errorf("the second claimant: %q", got)
 	}
-	if got := label(a); got != "~away "+client.ShortKey(awayKey) {
+	if got := label(a); got != "~away "+client.ShortChainAddress(awayKey) {
 		t.Errorf("after the clash the first claimant: %q", got)
 	}
 }

@@ -77,21 +77,21 @@ func TestHomeMatchesByPort(t *testing.T) {
 	i := inst(t, "http://127.0.0.1:4391")
 	writeHome(t, i, "other", "127.0.0.1:4040")
 	writeHome(t, i, "foreign", "10.0.0.9:4391")
-	if w, _, err := i.home(); w != "" || err != nil {
+	if w, _, err := i.home(i.Home); w != "" || err != nil {
 		t.Fatalf("no home should match, got %q %v", w, err)
 	}
 	writeHome(t, i, "play", ":4391")
 	os.Remove(filepath.Join(i.Home, "worlds", "play.json")) // world files say nothing of a kernel
-	if w, b, err := i.home(); w != "play" || b || err != nil {
+	if w, b, err := i.home(i.Home); w != "play" || b || err != nil {
 		t.Errorf("home() = %q %v %v, want play, not booted (empty host is every local address)", w, b, err)
 	}
 	booted(t, i, "play")
-	if w, b, _ := i.home(); w != "play" || !b {
+	if w, b, _ := i.home(i.Home); w != "play" || !b {
 		t.Errorf("a home with juice.db is booted: %q %v", w, b)
 	}
 	d := inst(t, "http://localhost:4040")
 	writeHome(t, d, "play", "") // no listen_addr: the kernel's default :4040
-	if w, _, _ := d.home(); w != "play" {
+	if w, _, _ := d.home(d.Home); w != "play" {
 		t.Error("a home without listen_addr listens on the default port")
 	}
 	for _, damage := range []func(string){
@@ -102,7 +102,7 @@ func TestHomeMatchesByPort(t *testing.T) {
 		writeHome(t, k, "play", "127.0.0.1:4391")
 		booted(t, k, "play")
 		damage(filepath.Join(k.Home, "kernels", "play", "config.json"))
-		if _, _, err := k.home(); err == nil || !strings.Contains(err.Error(), "holds a kernel (juice.db)") {
+		if _, _, err := k.home(k.Home); err == nil || !strings.Contains(err.Error(), "holds a kernel (juice.db)") {
 			t.Errorf("a kernel with a damaged config.json is an error: %v", err)
 		}
 	}
@@ -136,12 +136,18 @@ esac
 // fakes are the components' fake binaries, by name.
 var fakes = map[string]string{"juice": fakeJuice, "juice-agent": fakeAgent}
 
-// health is a fake /health that answers once up is set.
-func health(t *testing.T, up *atomic.Bool) *url.URL {
+// current is /health as kernel v0.23.0 answers it.
+const current = `{"blockchain_address":"0x9858effd232b4033e47d90003d41ec34ecaeda94","version":"v0.23.0"}`
+
+// health is a fake /health that answers current once up is set.
+func health(t *testing.T, up *atomic.Bool) *url.URL { return answering(t, up, current) }
+
+// answering is a fake /health that answers body once up is set.
+func answering(t *testing.T, up *atomic.Bool, body string) *url.URL {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if up.Load() {
-			w.Write([]byte(`{"public_key":"K"}`))
+			w.Write([]byte(body))
 			return
 		}
 		http.Error(w, "down", 503)
@@ -259,6 +265,20 @@ func installFake(t *testing.T, i *Installation) {
 	}
 }
 
+// A kernel serves this installation when its /health is current's: a v0.22
+// kernel on a chain, which sends an address too, does not.
+func TestServingIsACurrentKernel(t *testing.T) {
+	var up atomic.Bool
+	up.Store(true)
+	if !(&Installation{URL: health(t, &up)}).Serving(context.Background()) {
+		t.Error("a v0.23 kernel serves")
+	}
+	v022 := `{"blockchain_address":"0x9858effd232b4033e47d90003d41ec34ecaeda94","token":"0xc2132D05D31c914a87C6611C10748AEb04B58e8F","version":"v0.22.1"}`
+	if (&Installation{URL: answering(t, &up, v022)}).Serving(context.Background()) {
+		t.Error("a v0.22 kernel on a chain does not serve")
+	}
+}
+
 // Create writes the home and boots once with the password and the recovery
 // phrase in the child's environment only; it returns once the kernel answers.
 // A kernel.key in a home with no database, left by a boot that stopped between
@@ -325,7 +345,7 @@ func TestCreateBootsWithThePhraseAndWaitsForHealth(t *testing.T) {
 	if !strings.Contains(string(log), "boot "+i.Home+" pw phrase") {
 		t.Errorf("a first boot gets both variables: %s", log)
 	}
-	if w, _, _ := i.home(); w != "play" {
+	if w, _, _ := i.home(i.Home); w != "play" {
 		t.Error("the created home is this installation's kernel")
 	}
 	// An unfinished home on this port is finished or removed, not shadowed.
@@ -389,7 +409,7 @@ func TestCreateSucceedsOnceTheKernelExists(t *testing.T) {
 	if err := i.Create("play", "alpha", "secret123", "twelve words", nil); err != nil {
 		t.Errorf("a kernel that exists is created: %v", err)
 	}
-	if w, b, _ := i.home(); w != "play" || !b {
+	if w, b, _ := i.home(i.Home); w != "play" || !b {
 		t.Error("it is a booted home from now on")
 	}
 }
@@ -1191,9 +1211,12 @@ func endsWith(ctx context.Context) <-chan struct{} {
 	return done
 }
 
-// A kernel served by a binary older than v0.22.0 cannot be carried over. Old
-// names it, and Retire moves it, the state bound to it and its binary to a
-// folder of their own under old/, deleting nothing; nothing is old after that.
+// A kernel served by a binary older than v0.23.0 cannot be carried over. Old
+// names it, its world, whether its money is on a chain, by the world's
+// definition, and whether its recovery phrase gives a new kernel its address,
+// as one made since v0.22.0 does; Retire moves it, the state bound to it and
+// its binary to a folder of their own under old/, deleting nothing; nothing is
+// old after that.
 func TestRetireKeepsTheOldKernel(t *testing.T) {
 	i := inst(t, "http://127.0.0.1:4391")
 	write := func(p, s string, mode os.FileMode) {
@@ -1211,11 +1234,25 @@ func TestRetireKeepsTheOldKernel(t *testing.T) {
 	if _, old := i.Old(); old {
 		t.Error("with no kernel there is nothing to retire")
 	}
+	write("kernels/amoy/config.json", `{"kernel_handle":"y","listen_addr":"127.0.0.1:4040"}`, 0o600)
+	write("kernels/amoy/juice.db", "db", 0o600)
+	write("worlds/amoy.json", `{"rail":"manual"}`, 0o600)
 	writeHome(t, i, "polygon", "127.0.0.1:4391")
 	booted(t, i, "polygon")
-	binary("v0.22.1")
+	binary("v0.23.0")
 	if _, old := i.Old(); old {
-		t.Error("a kernel of v0.22 is not old, its key missing or not")
+		t.Error("a kernel of v0.23 is not old")
+	}
+	write("worlds/polygon.json", `{"rail":"evm","token":"0xc2132D05D31c914a87C6611C10748AEb04B58e8F"}`, 0o600)
+	write("ui/release", "v0.77.1\n", 0o600)
+	binary("v0.22.1")
+	k, old := i.Old()
+	if want := (OldKernel{Handle: "x", Version: "0.22.1", Release: "v0.77.1", World: "polygon", Chain: true, Phrase: true, Kept: filepath.Join(i.Home, "old", "0.22.1")}); !old || k != want {
+		t.Fatalf("a kernel of v0.22, on a chain by its world and holding no rail.key: Old = %+v %v, want %+v", k, old, want)
+	}
+	write("worlds/polygon.json", `{"rail":"manual"}`, 0o600)
+	if k, _ := i.Old(); k.Chain {
+		t.Error("a world whose money is not on a chain holds none there")
 	}
 	binary("v0.21.3")
 	write("kernels/polygon/rail.key", "k", 0o600)
@@ -1223,15 +1260,15 @@ func TestRetireKeepsTheOldKernel(t *testing.T) {
 	write("agents/a@x/config.json", "{}", 0o600)
 	write("services/chat/rooms.db", "r", 0o600)
 	write("supervisor/programs/kernel-polygon.json", "{}", 0o600)
-	write("worlds/polygon.json", "{}", 0o600)
+	write("worlds/polygon.json", `{"rail":"evm"}`, 0o600)
 	write("ui/release", "v0.76.3\n", 0o600)
 	write("ui/state.json", "{}", 0o600)
 	away, _ := url.Parse("http://10.0.0.9:4040")
 	if _, old := (&Installation{Home: i.Home, URL: away}).Old(); old {
 		t.Error("a UI that follows a kernel elsewhere has none to retire")
 	}
-	k, old := i.Old()
-	if want := (OldKernel{Handle: "x", Version: "0.21.3", Release: "v0.76.3", Chain: true, Kept: filepath.Join(i.Home, "old", "0.21.3")}); !old || k != want {
+	k, old = i.Old()
+	if want := (OldKernel{Handle: "x", Version: "0.21.3", Release: "v0.76.3", World: "polygon", Chain: true, Kept: filepath.Join(i.Home, "old", "0.21.3")}); !old || k != want {
 		t.Fatalf("Old = %+v %v, want %+v", k, old, want)
 	}
 	f, err := os.Create(filepath.Join(i.Home, "kernels", "polygon", "serve.lock"))
@@ -1281,6 +1318,7 @@ func TestAStoppedRetirementResumesInOneFolder(t *testing.T) {
 			os.MkdirAll(filepath.Join(i.Home, p), 0o700)
 			os.WriteFile(filepath.Join(i.Home, p, "release"), []byte("v0.76.3"), 0o600)
 		}
+		os.WriteFile(filepath.Join(i.Home, "worlds", "play.json"), []byte(`{"rail":"evm"}`), 0o600)
 		move := i.rename
 		i.rename = func(from, to string) error {
 			if from == filepath.Join(i.Home, bound[n]) {
@@ -1294,7 +1332,7 @@ func TestAStoppedRetirementResumesInOneFolder(t *testing.T) {
 		i.rename = move
 		os.MkdirAll(filepath.Join(i.Home, "supervisor", "programs"), 0o700) // as a restarted supervisor does
 		k, old := i.Old()
-		if !old || k.Kept != filepath.Join(i.Home, "old", "0.21.3") || k.Handle != "x" || k.Version != "0.21.3" {
+		if !old || k.Kept != filepath.Join(i.Home, "old", "0.21.3") || k.Handle != "x" || k.Version != "0.21.3" || k.World != "play" || !k.Chain || k.Phrase {
 			t.Fatalf("%s: still the same old kernel: %+v %v", bound[n], k, old)
 		}
 		if n > 0 && k.Release != "" {

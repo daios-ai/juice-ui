@@ -16,7 +16,7 @@ import (
 // The route says which kind of target it takes, and a target of the other kind
 // is refused (verified live, docs/kernel-v0.15-verification.md §2): `users`
 // takes an address (handle@kernel, the `@` unescaped) or account id, `peers` a
-// petname or public key. So a caller
+// petname or address. So a caller
 // must know which namespace it is addressing BEFORE it dials — which the UI
 // does, since its own routes are already split the same way. There is no route
 // by which a peer is credited.
@@ -40,10 +40,10 @@ type AdminUser struct {
 func (u AdminUser) Suspended() bool { return u.SuspendedAt != "" }
 
 // Peer is one row of the merged kernel roster: every kernel this one knows,
-// keyed by public key and excluding itself. Traded splits the two classes: a
+// keyed by address and excluding itself. Traded splits the two classes: a
 // COUNTERPARTY is a kernel a transaction here names, a DISCOVERED peer is a
 // catalog entry the discovery loop learned and nothing more. Either can be
-// named and suspended by key.
+// named and suspended by address.
 //
 // A peer holds NO MONEY on any path (kernel §D14): a foreign call is funded by
 // the serving kernel and every obligation settles per call on the rail (§P10),
@@ -51,18 +51,18 @@ func (u AdminUser) Suspended() bool { return u.SuspendedAt != "" }
 // SuspendedAt is present only on a suspended row under ?all=1.
 //
 // Naming follows Stiegler's petname model, which the kernel implements (§D15):
-// PublicKey is the only global, self-certifying name; Nickname is what the
+// BlockchainAddress is the only global, self-certifying name; Nickname is what the
 // kernel calls ITSELF and never resolves (self-asserted, collides freely, and
 // is counterparty prose); Petname is the name bound HERE and the only friendly
 // one that resolves. An unbound kernel has an empty Petname and stays callable
-// by key. Every URL, form and mutation keys on PublicKey — never on a displayed
+// by address. Every URL, form and mutation keys on BlockchainAddress — never on a displayed
 // name.
 type Peer struct {
-	Petname   string `json:"petname"`  // bound here; resolves; "" until bound
-	Nickname  string `json:"nickname"` // self-asserted by the remote; never resolves
-	PublicKey string `json:"public_key"`
-	Traded    bool   `json:"traded"`  // counterparty: a transaction here names it; else discovered
-	Actions   int    `json:"actions"` // public actions in its gossiped catalog
+	Petname           string `json:"petname"`  // bound here; resolves; "" until bound
+	Nickname          string `json:"nickname"` // self-asserted by the remote; never resolves
+	BlockchainAddress string `json:"blockchain_address"`
+	Traded            bool   `json:"traded"`  // counterparty: a transaction here names it; else discovered
+	Actions           int    `json:"actions"` // public actions in its gossiped catalog
 	// LastSeen and LastContactFailedAt are the kernel's contact cache (§13):
 	// when a verified exchange last succeeded, and when one last failed. Raw
 	// RFC3339 facts, each "" until it has happened — the kernel states neither
@@ -110,7 +110,7 @@ type PeerAction struct {
 // AvgLatencyMs is a float because the kernel emits it fractional (690.5,
 // 90760.5 — verified live 2026-08-06): an integer field fails the whole read.
 type Evidence struct {
-	IssuerPublicKey  string  `json:"issuer_public_key"`
+	IssuerKernel     string  `json:"issuer_kernel"`
 	SubjectActionID  string  `json:"subject_action_id"`
 	Uses             int64   `json:"uses"`
 	Successes        int64   `json:"successes"`
@@ -143,15 +143,15 @@ type Reachability struct {
 // of v0.12 — endorsement by association is replaced by signed, per-issuer
 // Evidence.
 type Inspection struct {
-	Petname      string       `json:"petname"`  // bound here; resolves; "" until bound
-	Nickname     string       `json:"nickname"` // self-asserted by the remote; never resolves
-	PublicKey    string       `json:"public_key"`
-	About        string       `json:"about"`
-	Actions      []PeerAction `json:"actions"`
-	Evidence     []Evidence   `json:"evidence"`
-	Online       bool         `json:"online"`
-	Source       string       `json:"source"` // "live" | "local" (last-known) | "none"
-	Reachability Reachability `json:"reachability"`
+	Petname           string       `json:"petname"`  // bound here; resolves; "" until bound
+	Nickname          string       `json:"nickname"` // self-asserted by the remote; never resolves
+	BlockchainAddress string       `json:"blockchain_address"`
+	About             string       `json:"about"`
+	Actions           []PeerAction `json:"actions"`
+	Evidence          []Evidence   `json:"evidence"`
+	Online            bool         `json:"online"`
+	Source            string       `json:"source"` // "live" | "local" (last-known) | "none"
+	Reachability      Reachability `json:"reachability"`
 }
 
 // SelfEvidence is the subject's own execution evidence — the rows it issued
@@ -160,7 +160,7 @@ type Inspection struct {
 func (i Inspection) SelfEvidence() []Evidence {
 	var out []Evidence
 	for _, e := range i.Evidence {
-		if e.IssuerPublicKey == i.PublicKey {
+		if e.IssuerKernel == i.BlockchainAddress {
 			out = append(out, e)
 		}
 	}
@@ -188,10 +188,9 @@ func (i Inspection) SelfEvidence() []Evidence {
 // under.
 type Identity struct {
 	Handle            string   `json:"handle"`
-	PublicKey         string   `json:"public_key"`
 	About             string   `json:"about"` // sys's description — what the network reads about us
 	Addrs             []string `json:"addrs"`
-	BlockchainAddress string   `json:"blockchain_address"` // where this kernel is paid; "" on a world without addresses
+	BlockchainAddress string   `json:"blockchain_address"` // its one global name, and where it is paid
 
 	Finalized *RailHoldings `json:"finalized"` // nil until a chain rail has read a block
 	Sys       SysFunds      `json:"sys"`
@@ -435,8 +434,8 @@ func (c *Client) AdminIdentity(ctx context.Context, token string) (Identity, err
 // deposit, which credits only users — and the durable lever is suspend; an
 // uncalled peer lapses through the kernel's retention.
 //
-// Every peer verb below takes a petname or a public key, and refuses a user.
-// The UI passes the public key throughout: it is the only global name, and an
+// Every peer verb below takes a petname or an address, and refuses a user.
+// The UI passes the address throughout: it is the only global name, and an
 // unbound kernel has no petname to pass.
 
 // AdminSuspendPeer freezes a peer's inbound calls
@@ -465,7 +464,6 @@ func (c *Client) AdminRenamePeer(ctx context.Context, token, key, petname string
 type PeerRecord struct {
 	Petname           string `json:"petname"`
 	Nickname          string `json:"nickname"`
-	PublicKey         string `json:"public_key"`
 	About             string `json:"about"`
 	BlockchainAddress string `json:"blockchain_address"`
 	FirstSeen         string `json:"first_seen"`
@@ -476,7 +474,7 @@ type PeerRecord struct {
 // refused): the kernel sets suspended_at only while it is.
 func (p PeerRecord) Suspended() bool { return p.SuspendedAt != "" }
 
-// AdminPeer reads this kernel's record of a peer by key (GET /v1/admin/peers/{key}).
+// AdminPeer reads this kernel's record of a peer by address (GET /v1/admin/peers/{address}).
 func (c *Client) AdminPeer(ctx context.Context, token, key string) (PeerRecord, error) {
 	var out PeerRecord
 	err := c.do(ctx, http.MethodGet, "/v1/admin/peers/"+url.PathEscape(key), token, nil, &out)

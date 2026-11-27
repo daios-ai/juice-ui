@@ -89,7 +89,7 @@ type Outcome struct {
 	// the failure transaction the kernel recorded.
 	Charged int64
 	// Peer names the kernel that refused a PeerRefused outcome, ready to print
-	// (a public key arrives abbreviated). Display only: nothing keys on it.
+	// (an address arrives abbreviated). Display only: nothing keys on it.
 	Peer string
 	// Room is the conversation the run was made from, when it was: a success
 	// is then the composer's draft (requirements §6.7).

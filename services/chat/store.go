@@ -23,7 +23,7 @@ import (
 // decided here by membership alone, and every state change that must hold
 // together is one transaction.
 //
-// A member is held by its principal, user_id@kernel_key, which the kernel
+// A member is held by its principal, user_id@kernel_address, which the kernel
 // gives it and which names it on every kernel and through a rename. A store made
 // before 0.72.0 holds its members by address, handle@kernel, until each is bound
 // to its principal (Bind, Seat).
@@ -1008,11 +1008,11 @@ func (s *Store) Member(raw string) (string, bool) {
 
 // ---- principals ----
 
-// IsPrincipal reports a principal, user_id@kernel_key: what the kernel names a
+// IsPrincipal reports a principal, user_id@kernel_address: what the kernel names a
 // user by on every kernel.
 func IsPrincipal(m string) bool {
 	id, k, ok := strings.Cut(m, "@")
-	return ok && client.IsKey(k) && len(id) == 36 && strings.Count(id, "-") == 4
+	return ok && client.IsChainAddress(k) && len(id) == 36 && strings.Count(id, "-") == 4
 }
 
 // ID is what the store holds a member by: its principal, or the address a

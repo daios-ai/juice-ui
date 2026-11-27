@@ -47,7 +47,11 @@ type fakeKernel struct {
 // kernelOf is the kernel an address or a principal names, by name.
 func kernelOf(a string) string {
 	_, k, _ := strings.Cut(a, "@")
-	return strings.TrimRight(k, "K")
+	k, _, _ = strings.Cut(k, "/")
+	if name, ok := kernelNames.Load(k); ok {
+		return name.(string)
+	}
+	return k
 }
 
 // party is how the kernel names an address or a principal; nobody, with the

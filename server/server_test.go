@@ -228,7 +228,7 @@ func TestSessionRefusesADifferentKernel(t *testing.T) {
 	var told atomic.Int32 // revocations the other kernel received
 	wrap := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/health" && swapped.Load() {
-			w.Write([]byte(`{"status":"ok","handle":"other","public_key":"OTHERKEY","network":"play","network_fingerprint":"D2","decimals":0}`))
+			w.Write([]byte(`{"status":"ok","handle":"other","blockchain_address":"OTHERKEY","network":"play","network_fingerprint":"D2","decimals":0}`))
 			return
 		}
 		if r.URL.Path == "/v1/auth/logout" {
@@ -525,7 +525,7 @@ func TestRecordedKeyRefusesAnotherKernel(t *testing.T) {
 // an action address: whether its kernel segment is this kernel's name. Both
 // fail closed while the kernel's name is unknown.
 func TestKernelIdentityAddressAndLocal(t *testing.T) {
-	k := &KernelIdentity{id: client.Health{Handle: "alpha", PublicKey: "PK"}, fetched: time.Now(), ttl: time.Hour}
+	k := &KernelIdentity{id: client.Health{Handle: "alpha", BlockchainAddress: "PK"}, fetched: time.Now(), ttl: time.Hour}
 	if got := k.Address("ana"); got != "ana@alpha" {
 		t.Errorf("Address = %q", got)
 	}

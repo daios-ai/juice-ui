@@ -210,20 +210,20 @@ func TestPeerRefusalIsNotTheUsersPermission(t *testing.T) {
 }
 
 // A peer name arrives as whichever name the failing path had: a petname where
-// it knew one, the public key otherwise (both observed live on v0.12.24). A key
-// is 44 unreadable characters, so it is abbreviated before it reaches prose —
-// while the raw value stays available for logic.
-func TestPeerDisplayAbbreviatesAKeyButNotAPetname(t *testing.T) {
-	key := "1MutJi6KXZIWlxJMiIKsAu4gR6-R4ACoEJwP7sNT_mq4" // as the kernel sends
-	if len(key) != KeyLen {
-		t.Fatalf("fixture is not a key-shaped name: %d chars", len(key))
+// it knew one, the address otherwise (both observed live on v0.12.24). An
+// address is 42 unreadable characters, so it is abbreviated before it reaches
+// prose — while the raw value stays available for logic.
+func TestPeerDisplayAbbreviatesAnAddressButNotAPetname(t *testing.T) {
+	key := "0x9858effd232b4033e47d90003d41ec34ecaeda94" // as the kernel sends
+	if !IsChainAddress(key) {
+		t.Fatalf("fixture is not an address: %q", key)
 	}
 	ke, _ := AsKernelError(classify(502, []byte(`{"code":"peer_unreachable","error":"peer `+key+` is unreachable","meta":{"peer":"`+key+`"}}`)))
 	if ke.Peer() != key {
 		t.Errorf("Peer() must stay raw for logic, got %q", ke.Peer())
 	}
-	if got := ke.PeerDisplay(); got != "1MutJi6KXZ…_mq4" {
-		t.Errorf("PeerDisplay() = %q, want the abbreviated key", got)
+	if got := ke.PeerDisplay(); got != "0x9858…da94" {
+		t.Errorf("PeerDisplay() = %q, want the abbreviated address", got)
 	}
 	if msg := ke.UserMessage(); strings.Contains(msg, key) {
 		t.Errorf("a key must never reach a sentence whole: %q", msg)

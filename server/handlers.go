@@ -517,7 +517,7 @@ func (s *Server) entryAddress(r *http.Request) string {
 // record whatever answered rather than what was trusted.
 func (s *Server) doLogin(ctx context.Context, address, password string) error {
 	id := s.kernelIdentity(ctx)
-	if id.PublicKey == "" {
+	if id.BlockchainAddress == "" {
 		return client.ErrUnavailable
 	}
 	tokens, err := s.client.SignIn(ctx, address, password)
@@ -525,7 +525,7 @@ func (s *Server) doLogin(ctx context.Context, address, password string) error {
 		return err
 	}
 	old, err := s.sessions.Login(ctx, tokens, address, session.Pin{
-		PublicKey:          id.PublicKey,
+		Kernel:             id.BlockchainAddress,
 		NetworkFingerprint: id.NetworkFingerprint,
 	})
 	if err != nil {
@@ -677,7 +677,7 @@ func unheard(name string) string {
 
 // disconnect deletes the viewer's grants under selector. A kernel that did not
 // answer keeps its copy, which a call served there can still use (kernel D10),
-// so the disconnect is recorded, by key, and sent again (resend). It takes the
+// so the disconnect is recorded, by address, and sent again (resend). It takes the
 // viewer's one ordered path, as connecting does.
 func (s *Server) disconnect(r *http.Request, selector string) (unanswered bool, err error) {
 	ctx := r.Context()
@@ -715,7 +715,7 @@ func (s *Server) reconnect(r *http.Request, selector string, connect func() erro
 	})
 }
 
-// reconnectAs is reconnect for one viewer, naming the selector by key with
+// reconnectAs is reconnect for one viewer, naming the selector by address with
 // name once the grant exists.
 func (s *Server) reconnectAs(viewer, selector string, connect func() error, name func(string) string) error {
 	mu := s.viewers.lock(viewer)
@@ -761,8 +761,8 @@ const (
 	resendEvery = time.Hour
 )
 
-// keyedSelector is selector with its kernel spelled by key, as the viewer's
-// grants name it (client.Party.Keyed): a petname changes, a key does not, so a
+// keyedSelector is selector with its kernel spelled by address, as the viewer's
+// grants name it (client.Party.Keyed): a petname changes, an address does not, so a
 // disconnect waiting to be sent again and a later connection compare alike.
 // A selector no grant names is returned as given.
 func keyedSelector(me client.User, selector string) string {
@@ -970,7 +970,7 @@ func (s *Server) getBrowse(w http.ResponseWriter, r *http.Request) {
 
 // ownerOf is the owner a catalog was narrowed to, as its actions' replies name
 // it, so the heading names it by the naming rule. When it owns nothing the
-// viewer may see, an owner of this kernel spelled by key is named by this
+// viewer may see, an owner of this kernel spelled by address is named by this
 // kernel's name; any other is the address as asked.
 func (s *Server) ownerOf(owner string, cat []client.Action) *client.Party {
 	for _, a := range cat {
@@ -2088,9 +2088,10 @@ type walletReview struct {
 	Reason string
 }
 
-// HasAddresses reports a world whose money has addresses: only there does a
-// user register one to be paid at (template helper).
-func (v walletView) HasAddresses() bool { return v.KernelAddress != "" }
+// HasAddresses reports a world whose money has addresses, one with a token
+// (every kernel has an address since v0.23): only there does a user register
+// one to be paid at (template helper).
+func (v walletView) HasAddresses() bool { return v.Token != "" }
 
 // CanWithdraw reports that a withdrawal has somewhere to go: every world pays
 // out, but one with addresses pays only to a registered one (template helper).
@@ -2119,9 +2120,9 @@ func (s *Server) renderWallet(w http.ResponseWriter, r *http.Request, form strin
 		}
 		view.Available, view.Locked, view.MyAddress, view.Empty = me.Available, me.Locked, me.BlockchainAddress, empty(me)
 		view.depositForm = depositForm{Back: "/wallet", Account: me.Address.Address}
-		view.MessagePrefix = wallet.Message(id.PublicKey, me.ID, "")
+		view.MessagePrefix = wallet.Message(id.BlockchainAddress, me.ID, "")
 		if a := strings.TrimSpace(r.URL.Query().Get("address")); a != "" && form == "address" {
-			view.SignAddress, view.Message = a, wallet.Message(id.PublicKey, me.ID, a)
+			view.SignAddress, view.Message = a, wallet.Message(id.BlockchainAddress, me.ID, a)
 		}
 		// An unread list is not an empty one: a table claiming no withdrawals
 		// while money is in flight would misstate it.
