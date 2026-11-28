@@ -8,10 +8,11 @@
 // filesystem editor and a client of the process supervisor, not a kernel-HTTP feature. It
 //
 //   - creates a home with a blank agent.md;
-//   - edits agent.md, and config.json through the form of the daemon's own
-//     schema of it, $JUICE_HOME/schemas/juice-agent.schema.json, written at
-//     every start (agent requirements §11); the daemon reads the file at its
-//     next start;
+//   - edits agent.md and heartbeat.md, the texts of an agent the operator
+//     writes, and config.json through the form of the daemon's own schema of
+//     it, $JUICE_HOME/schemas/juice-agent.schema.json, written at every start
+//     (agent requirements §11); the daemon reads agent.md at every job, the
+//     others at its next start;
 //   - declares `juice-agent serve <login>` to the process supervisor, and asks
 //     it to start and stop the daemon serving a login, whoever started it.
 //
@@ -66,11 +67,12 @@ var tmplFS embed.FS
 const binEnv = "JUICE_AGENT_BIN"
 
 // The files of an agent home the UI edits (agent requirements.md §11), and
-// the daemon's schema of the second.
+// the daemon's schema of config.json.
 const (
-	agentFile  = "agent.md"
-	configFile = "config.json"
-	schemaFile = "juice-agent.schema.json"
+	agentFile     = "agent.md"
+	heartbeatFile = "heartbeat.md"
+	configFile    = "config.json"
+	schemaFile    = "juice-agent.schema.json"
 )
 
 // A handle names the home directory, so it is validated strictly: lowercase
@@ -82,7 +84,33 @@ const agentsIcon = template.HTML(`<svg class="ico" aria-hidden="true" viewBox="0
 
 var handleRe = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*$`)
 
-var editable = map[string]bool{agentFile: true}
+// text is a file of an agent home the operator writes in their own words: its
+// name, its title as the page says it, and whether the daemon reads it only at
+// its start (agent requirements §9, §10).
+type text struct {
+	File, Title string
+	AtStart     bool
+}
+
+// texts are those files: agent.md, the instructions, read at every job, and
+// heartbeat.md, the duties of the heartbeat, read once at start.
+var texts = []text{
+	{File: agentFile, Title: "instructions"},
+	{File: heartbeatFile, Title: "heartbeat", AtStart: true},
+}
+
+// Label is the title as a field's label says it.
+func (t text) Label() string { return capitalize(t.Title) }
+
+// textOf is the text a file name names, if any.
+func textOf(file string) (text, bool) {
+	for _, t := range texts {
+		if t.File == file {
+			return t, true
+		}
+	}
+	return text{}, false
+}
 
 var (
 	errBadHandle = errors.New("invalid agent handle")
@@ -405,11 +433,10 @@ func (a *Agents) readFile(handle, file string) (string, error) {
 	return string(b), nil
 }
 
-// writeFile writes one editable file.
-func (a *Agents) writeFile(handle, file, content string) error {
-	if !editable[file] {
-		return errBadHandle
-	}
+// writeFile replaces a file of the agent's home whole, by a temp file renamed
+// over it, so a daemon starting meanwhile reads the old file or the new one.
+// Which files a request may name is its handler's to decide.
+func (a *Agents) writeFile(handle, file string, content []byte) error {
 	dir, err := a.agentDir(handle)
 	if err != nil {
 		return err
@@ -417,17 +444,7 @@ func (a *Agents) writeFile(handle, file, content string) error {
 	if _, err := os.Stat(dir); err != nil {
 		return errNotFound
 	}
-	return os.WriteFile(filepath.Join(dir, file), []byte(content), 0o600)
-}
-
-// writeConfig replaces the agent's config.json whole, by a temp file renamed
-// over it, so a daemon starting meanwhile reads the old file or the new one.
-func (a *Agents) writeConfig(handle string, content []byte) error {
-	dir, err := a.agentDir(handle)
-	if err != nil {
-		return err
-	}
-	tmp, err := os.CreateTemp(dir, configFile+".*")
+	tmp, err := os.CreateTemp(dir, file+".*")
 	if err != nil {
 		return err
 	}
@@ -440,7 +457,7 @@ func (a *Agents) writeConfig(handle string, content []byte) error {
 		_ = os.Remove(tmp.Name())
 		return err
 	}
-	return os.Rename(tmp.Name(), filepath.Join(dir, configFile))
+	return os.Rename(tmp.Name(), filepath.Join(dir, file))
 }
 
 // editor edits config.json through the daemon's schema of it, absent until an
@@ -693,15 +710,21 @@ type listView struct {
 // detailView is an agent's page: its card, and its settings.
 type detailView struct {
 	card
-	Held    bool   // an earlier release keeps this agent's password: Set password
-	Agent   string // agent.md
-	Config  any    // config.json as the editor's form; an absent file is {}
-	Version string // the file's version, carried by the form and checked by a save
+	Held    bool       // an earlier release keeps this agent's password: Set password
+	Texts   []textView // agent.md and heartbeat.md, in the order of texts
+	Config  any        // config.json as the editor's form; an absent file is {}
+	Version string     // the file's version, carried by the form and checked by a save
 }
 
-// Instructions is the first line of agent.md, as its settings row shows it.
-func (v detailView) Instructions() string {
-	for _, l := range strings.Split(v.Agent, "\n") {
+// textView is one of the agent's texts with what it holds.
+type textView struct {
+	text
+	Content string
+}
+
+// First is the text's first line, as its settings row shows it.
+func (v textView) First() string {
+	for _, l := range strings.Split(v.Content, "\n") {
 		if l = strings.TrimSpace(l); l != "" {
 			if len([]rune(l)) > 60 {
 				l = string([]rune(l)[:60]) + "…"
@@ -880,7 +903,11 @@ func (a *Agents) renderDetail(w http.ResponseWriter, r *http.Request, code int, 
 		return
 	}
 	c.OpenForm, c.Error = form, errMsg
-	agent, _ := a.readFile(handle, agentFile)
+	var tv []textView
+	for _, t := range texts {
+		content, _ := a.readFile(handle, t.File)
+		tv = append(tv, textView{t, content})
+	}
 	file, err := a.readFile(handle, configFile)
 	if a.deps.HandleErr(w, r, err) {
 		return
@@ -892,7 +919,7 @@ func (a *Agents) renderDetail(w http.ResponseWriter, r *http.Request, code int, 
 	a.deps.RenderPage(w, r, code, "agent", handle, detailView{
 		card:    c,
 		Held:    a.heldPassword(handle) != "",
-		Agent:   agent,
+		Texts:   tv,
 		Config:  config,
 		Version: a.editor().Version([]byte(file)),
 	})
@@ -1008,18 +1035,32 @@ func (a *Agents) fundRefused(w http.ResponseWriter, r *http.Request, handle stri
 	a.reopen(w, r, http.StatusUnprocessableEntity, handle, "fund", "", f)
 }
 
+// postSaveFile writes one of the agent's texts; no other file is this route's.
 func (a *Agents) postSaveFile(w http.ResponseWriter, r *http.Request) {
 	handle := r.PathValue("handle")
-	file := r.PathValue("file")
-	if !editable[file] || !a.exists(handle) {
+	t, ok := textOf(r.PathValue("file"))
+	if !ok || !a.exists(handle) {
 		a.notFound(w, r)
 		return
 	}
 	content := strings.ReplaceAll(r.FormValue("content"), "\r\n", "\n")
-	if err := a.writeFile(handle, file, content); a.deps.HandleErr(w, r, err) {
+	if err := a.writeFile(handle, t.File, []byte(content)); a.deps.HandleErr(w, r, err) {
 		return
 	}
-	a.deps.FlashRedirect(w, r, "/agents/"+handle, "success", "Saved.")
+	msg := "Saved."
+	if t.AtStart {
+		msg = a.saved(handle)
+	}
+	a.deps.FlashRedirect(w, r, "/agents/"+handle, "success", msg)
+}
+
+// saved is the flash of a save of a file the daemon reads at its start: a
+// running agent applies it once stopped and started.
+func (a *Agents) saved(handle string) string {
+	if running, _ := a.running(handle); running {
+		return "Saved. Stop and start " + handle + " to apply."
+	}
+	return "Saved."
 }
 
 // config reads the agent's config.json for its three handlers: "" when
@@ -1062,14 +1103,10 @@ func (a *Agents) postConfig(w http.ResponseWriter, r *http.Request) {
 		a.deps.FlashRedirect(w, r, back, "info", "Nothing changed.")
 		return
 	}
-	if err := a.writeConfig(handle, append(to, '\n')); a.deps.HandleErr(w, r, err) {
+	if err := a.writeFile(handle, configFile, append(to, '\n')); a.deps.HandleErr(w, r, err) {
 		return
 	}
-	msg := "Saved."
-	if running, _ := a.running(handle); running {
-		msg = "Saved. Stop and start " + handle + " to apply."
-	}
-	a.deps.FlashRedirect(w, r, back, "success", msg)
+	a.deps.FlashRedirect(w, r, back, "success", a.saved(handle))
 }
 
 func (a *Agents) postConfigJSON(w http.ResponseWriter, r *http.Request) {

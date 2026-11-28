@@ -1,7 +1,17 @@
 # Juice Web UI Requirements
 
-Version: 0.78.0
+Version: 0.78.1
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.78.1.** juice-agent's pin is v0.12.1, which names the
+> kernel by its address and continues a home 0.11.1 bound on such a kernel.
+> An agent's page edits `heartbeat.md`, its **heartbeat**, the duties its
+> heartbeat carries out, beside its **instructions**, each a row and a dialog
+> of one kind; `heartbeat_seconds` is a field of its configuration form, from
+> the daemon's schema. The daemon reads `heartbeat.md` at its start, so a save
+> while the agent runs says "Saved. Stop and start <agent> to apply.", as a
+> configuration save does. Every file of a home is written whole, by rename
+> (§6.7).
 
 > **What changed in 0.78.0.** The kernel pin is v0.23.0, which names a kernel
 > by one thing, its blockchain address, `0x` and 40 hex digits: in `/health`,
@@ -2052,14 +2062,18 @@ and absent until then.
 
   * **Homes and files.** It keeps an agent's home at `$JUICE_HOME/agents/<login>/`
     (ecosystem-standard §2), read by one reading of who is an agent here
-    (`apps.AgentLogins`), edits its `agent.md`, its **instructions**, and its
+    (`apps.AgentLogins`), edits its texts, `agent.md`, its **instructions**,
+    read at every job, and `heartbeat.md`, its **heartbeat**, the duties of its
+    heartbeat, read at its start (juice-agent 0.12 §10), each a settings row
+    showing its first line and a dialog, and its
     `config.json` through the form of the daemon's own schema of it,
     `$JUICE_HOME/schemas/juice-agent.schema.json`, as the kernel's configuration
     is edited (§6.6), `$schema` kept as saved and the JSON editor alone until the
-    schema exists: a save replaces the file whole, by rename, which the daemon
-    reads at its next start, and a running agent's flash says "Saved. Stop and
-    start <agent> to apply."; a save from a page older than the file is refused, since the
-    daemon's start writes the keys a file lacks (juice-agent 0.7.0 §11).
+    schema exists. A save replaces the file whole, by rename; a save of a file
+    the daemon reads at its next start, `heartbeat.md` or `config.json`, says
+    while the agent runs "Saved. Stop and start <agent> to apply."; a save from a
+    page older than `config.json` is refused, since the daemon's start writes
+    the keys a file lacks (juice-agent 0.7.0 §11).
   * **The program.** Each agent is the program `agent-<login>` of the process
     supervisor (§1), running `juice-agent serve <login>`; any home with no
     program is declared once at start, running when it has a session and

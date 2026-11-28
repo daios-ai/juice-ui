@@ -139,7 +139,7 @@ func TestCreateExistingIsRefusedWithoutTruncation(t *testing.T) {
 	if err := a.create("x"); err != nil {
 		t.Fatal(err)
 	}
-	if err := a.writeFile("x", agentFile, "hand-authored"); err != nil {
+	if err := a.writeFile("x", agentFile, []byte("hand-authored")); err != nil {
 		t.Fatal(err)
 	}
 	if err := a.create("x"); err != errExists {
@@ -151,18 +151,27 @@ func TestCreateExistingIsRefusedWithoutTruncation(t *testing.T) {
 	}
 }
 
-func TestWriteAndReadEditableFiles(t *testing.T) {
+// Every file of a home is written whole, by a file renamed over it, so a
+// daemon starting meanwhile reads the old file or the new one, never part.
+func TestWriteReplacesByRename(t *testing.T) {
 	a, _, _ := testApp(t)
 	_ = a.create("x")
-	if err := a.writeFile("x", agentFile, "You are helpful."); err != nil {
-		t.Fatalf("write: %v", err)
+	for _, f := range []string{agentFile, heartbeatFile, configFile} {
+		if err := a.writeFile("x", f, []byte("one")); err != nil {
+			t.Fatalf("%s: write: %v", f, err)
+		}
+		dir, _ := a.agentDir("x")
+		before, _ := os.Stat(filepath.Join(dir, f))
+		if err := a.writeFile("x", f, []byte("two")); err != nil {
+			t.Fatalf("%s: write: %v", f, err)
+		}
+		after, _ := os.Stat(filepath.Join(dir, f))
+		if got, err := a.readFile("x", f); err != nil || got != "two" || os.SameFile(before, after) {
+			t.Errorf("%s: read = %q (%v), replaced by rename: %v", f, got, err, !os.SameFile(before, after))
+		}
 	}
-	if got, err := a.readFile("x", agentFile); err != nil || got != "You are helpful." {
-		t.Fatalf("read = %q (%v)", got, err)
-	}
-	// config.json is not the file route's: it has the editor (§6.1).
-	if err := a.writeFile("x", configFile, "{}"); err != errBadHandle {
-		t.Fatalf("writeFile(config.json) = %v, want refused", err)
+	if err := a.writeFile("ghost", agentFile, []byte("x")); err != errNotFound {
+		t.Errorf("a home that does not exist is not made: %v", err)
 	}
 }
 
@@ -395,7 +404,7 @@ func TestGetDetailNotFoundAndFound(t *testing.T) {
 	// Existing agent → detail page with files.
 	cap.err = nil
 	_ = a.create("research")
-	_ = a.writeFile("research", agentFile, "hello")
+	_ = a.writeFile("research", agentFile, []byte("hello"))
 	req = httptest.NewRequest(http.MethodGet, "/agents/research", nil)
 	req.SetPathValue("handle", "research")
 	a.getDetail(httptest.NewRecorder(), req)
@@ -403,7 +412,8 @@ func TestGetDetailNotFoundAndFound(t *testing.T) {
 		t.Fatalf("unexpected err: %v", cap.err)
 	}
 	dv, ok := cap.data.(detailView)
-	if !ok || dv.Handle != "research" || dv.Agent != "hello" || dv.Config != "form of " || dv.Version != "v0" {
+	if !ok || dv.Handle != "research" || len(dv.Texts) != 2 || dv.Texts[0].File != agentFile || dv.Texts[0].Content != "hello" ||
+		dv.Texts[1].File != heartbeatFile || dv.Texts[1].Content != "" || dv.Config != "form of " || dv.Version != "v0" {
 		t.Fatalf("detailView = %+v", cap.data)
 	}
 }
@@ -422,6 +432,36 @@ func TestPostSaveFile(t *testing.T) {
 	if got, _ := a.readFile("research", agentFile); got != "You are concise." {
 		t.Fatalf("agent.md = %q", got)
 	}
+	// The heartbeat's duties are read at the daemon's start, so a running
+	// agent's save says so, as a configuration's does; agent.md is read at
+	// every job.
+	save := func(file string) string {
+		t.Helper()
+		req := postForm("/agents/research/files/"+file, "content=Check+the+inbox.")
+		req.SetPathValue("handle", "research")
+		req.SetPathValue("file", file)
+		a.postSaveFile(httptest.NewRecorder(), req)
+		return cap.flashMsg
+	}
+	if msg := save(heartbeatFile); msg != "Saved." {
+		t.Errorf("stopped: %q", msg)
+	}
+	if got, _ := a.readFile("research", heartbeatFile); got != "Check the inbox." {
+		t.Fatalf("heartbeat.md = %q", got)
+	}
+	dir, _ := a.agentDir("research")
+	lock, err := hold(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fmt.Fprintf(lock, "%d\n", os.Getpid())
+	if msg := save(heartbeatFile); msg != "Saved. Stop and start research to apply." {
+		t.Errorf("running, heartbeat.md: %q", msg)
+	}
+	if msg := save(agentFile); msg != "Saved." {
+		t.Errorf("running, agent.md: %q", msg)
+	}
+	lock.Close()
 	// A file of the earlier layout is not an editable target → not found.
 	cap.err = nil
 	req = postForm("/agents/research/files/memory.md", "content=tamper")
@@ -1310,7 +1350,7 @@ func TestAnAgentSaysWhatStopsItWorking(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	must(a.writeConfig("research", []byte(`{"reason":"sys@testnet/llm/chat","default_budget":100}`)))
+	must(a.writeFile("research", configFile, []byte(`{"reason":"sys@testnet/llm/chat","default_budget":100}`)))
 	detail := func() readiness {
 		serve(httptest.NewRequest(http.MethodGet, "/agents/research", nil), a.getDetail)
 		v, _ := cap.data.(detailView)
@@ -1323,12 +1363,12 @@ func TestAnAgentSaysWhatStopsItWorking(t *testing.T) {
 		k.mu.Lock()
 		k.balance = c.balance
 		k.mu.Unlock()
-		must(a.writeConfig("research", []byte(fmt.Sprintf(`{"reason":"sys@testnet/llm/chat","default_budget":%d}`, c.budget))))
+		must(a.writeFile("research", configFile, []byte(fmt.Sprintf(`{"reason":"sys@testnet/llm/chat","default_budget":%d}`, c.budget))))
 		if rd := detail(); rd.Short != c.want || rd.Call != 1200 || rd.Budget != c.budget {
 			t.Errorf("balance %d budget %d: %+v, want %q", c.balance, c.budget, rd, c.want)
 		}
 	}
-	must(a.writeConfig("research", []byte(`{}`)))
+	must(a.writeFile("research", configFile, []byte(`{}`)))
 	if rd := detail(); rd.Short != "" || rd.Call != 0 {
 		t.Errorf("no model named, a balance: %+v", rd)
 	}
@@ -1340,7 +1380,7 @@ func TestAnAgentSaysWhatStopsItWorking(t *testing.T) {
 	}
 	must(a.create("second"))
 	for _, h := range []string{"research", "second"} {
-		must(a.writeConfig(h, []byte(`{"reason":"sys@testnet/llm/chat","default_budget":50000}`)))
+		must(a.writeFile(h, configFile, []byte(`{"reason":"sys@testnet/llm/chat","default_budget":50000}`)))
 	}
 	k.mu.Lock()
 	k.refs = nil
@@ -1565,10 +1605,13 @@ func TestAnAgentIsARowAndItsPageItsFacts(t *testing.T) {
 		t.Error("one row and one set of dialogs per agent")
 	}
 	page := render("agent", server.Page{Me: "sys@alpha", Accounts: []string{"sys@alpha"}, CSRFField: "<input name=csrf>",
-		Data: detailView{card: running, Held: true, Agent: "\nYou are concise.\nMore.", Config: form}})
+		Data: detailView{card: running, Held: true, Texts: []textView{{texts[0], "\nYou are concise.\nMore."}, {texts[1], ""}}, Config: form}})
 	for _, want := range []string{`<h1><span class="ref mono">helper</span> <span class="pill status-danger">no funds</span></h1>`,
 		`<dt>Balance</dt>`, `<dt>Parked</dt>`, `<dt>Model</dt>`, " a call", `<dt>Budget</dt>`, " per job", `<dt>Active</dt>`,
 		`<h2>Settings</h2>`, `<span>instructions</span><span class="detail">You are concise.</span>`,
+		`<span>heartbeat</span><span class="detail">empty</span>`, `href="/agents/helper?form=heartbeat.md" data-modal="form-heartbeat.md"`,
+		`<dialog id="form-agent.md"`, `aria-label="Edit instructions"`, `action="/agents/helper/files/agent.md"`, ">\nYou are concise.\nMore.</textarea>",
+		`<dialog id="form-heartbeat.md"`, `aria-label="Edit heartbeat"`, `action="/agents/helper/files/heartbeat.md"`, `<label for="text-heartbeat.md">Heartbeat</label>`,
 		`data-modal="form-config"`, `<dialog id="form-config"`, `<span>password</span>`} {
 		if !strings.Contains(page, want) {
 			t.Errorf("the page lacks %q", want)

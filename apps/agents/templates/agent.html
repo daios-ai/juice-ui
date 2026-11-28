@@ -24,7 +24,8 @@
      and the one command that changes it; the destructive one last. */}}
 <h2>Settings</h2>
 <div class="you-list">
-  <div class="you-row"><span>instructions</span><span class="detail">{{or $d.Instructions "empty"}}</span><a class="btn" href="/agents/{{$h}}?form=agent" data-modal="form-agent">Edit</a></div>
+  {{range $d.Texts}}<div class="you-row"><span>{{.Title}}</span><span class="detail">{{or .First "empty"}}</span><a class="btn" href="/agents/{{$h}}?form={{.File}}" data-modal="form-{{.File}}">Edit</a></div>
+  {{end}}
   <div class="you-row"><span>configuration</span><span class="detail">model · budget</span><a class="btn" href="/agents/{{$h}}?form=config" data-modal="form-config">Edit</a></div>
   {{if $d.Held}}<div class="you-row"><span>password</span><span class="detail"></span><a class="btn" href="/agents/{{$h}}?form=password" data-modal="form-password">Set password</a></div>{{end}}
   {{if not $d.Running}}<div class="you-row"><span>delete</span><span class="detail">{{with $d.Account}}leaves {{money .Available}} in its account{{end}}</span>
@@ -69,19 +70,22 @@
 {{end}}
 
 
-{{/* ---- Instructions: agent.md, the agent's standing instructions ---- */}}
-<dialog id="form-agent" class="modal-form"{{if eq $d.OpenForm "agent"}} open{{end}} aria-label="Edit instructions">
-  <div class="modal-head"><h2>Edit instructions</h2><a class="modal-close" href="/agents/{{$h}}" data-modal-close aria-label="Close">×</a></div>
+{{/* ---- The agent's texts: agent.md, its instructions, and heartbeat.md,
+     the duties of its heartbeat, each with its dialog ---- */}}
+{{range $d.Texts}}
+<dialog id="form-{{.File}}" class="modal-form"{{if eq $d.OpenForm .File}} open{{end}} aria-label="Edit {{.Title}}">
+  <div class="modal-head"><h2>Edit {{.Title}}</h2><a class="modal-close" href="/agents/{{$h}}" data-modal-close aria-label="Close">×</a></div>
   <div class="modal-body">
-    <form class="stack" method="post" action="/agents/{{$h}}/files/agent.md">
-      {{.CSRFField}}
+    <form class="stack" method="post" action="/agents/{{$h}}/files/{{.File}}">
+      {{$.CSRFField}}
       <div class="field">
-        <label for="agent-md">Instructions</label>
-        <textarea id="agent-md" name="content" rows="12">{{$d.Agent}}</textarea>
+        <label for="text-{{.File}}">{{.Label}}</label>
+        <textarea id="text-{{.File}}" name="content" rows="12">{{.Content}}</textarea>
       </div>
       <button class="btn-primary" type="submit">Save</button>
     </form>
   </div>
 </dialog>
+{{end}}
 
 {{end}}
